@@ -115,12 +115,12 @@ export default async function OrganizerDashboardPage() {
       )}
 
       {/* Pending Applications Alert */}
-      {pendingApplicationsCount > 0 && (
+      {(pendingApplicationsCount ?? 0) > 0 && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
           <Users className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
             <h3 className="text-sm font-medium text-blue-800">
-              {pendingApplicationsCount || 0} pending application{pendingApplicationsCount > 1 ? 's' : ''}
+              {pendingApplicationsCount || 0} pending application{(pendingApplicationsCount ?? 0) > 1 ? 's' : ''}
             </h3>
             <p className="text-sm text-blue-700 mt-1">
               Therapists are waiting to hear back about your shifts.
