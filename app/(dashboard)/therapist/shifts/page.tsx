@@ -17,18 +17,18 @@ import { EVENT_TYPE_LABELS, CANADIAN_PROVINCES, COMMON_SPORTS } from '@/lib/cons
 import { ShiftFilters } from './shift-filters'
 
 interface PageProps {
-  searchParams: Promise<{
+  searchParams: {
     city?: string
     province?: string
     event_type?: string
     sport?: string
     min_rate?: string
-  }>
+  }
 }
 
 export default async function TherapistShiftsPage({ searchParams }: PageProps) {
   const supabase = createClient()
-  const params = await searchParams
+  const params = searchParams
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')

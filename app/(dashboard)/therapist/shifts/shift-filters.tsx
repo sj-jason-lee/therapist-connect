@@ -1,16 +1,16 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Filter, X } from 'lucide-react'
 
 interface ShiftFiltersProps {
-  provinces: { value: string; label: string }[]
+  provinces: readonly { readonly value: string; readonly label: string }[]
   eventTypes: { value: string; label: string }[]
-  sports: string[]
+  sports: readonly string[]
   currentFilters: {
     city?: string
     province?: string
@@ -22,8 +22,11 @@ interface ShiftFiltersProps {
 
 export function ShiftFilters({ provinces, eventTypes, sports, currentFilters }: ShiftFiltersProps) {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const [isOpen, setIsOpen] = useState(false)
+
+  // Convert readonly arrays to mutable for Select component
+  const provinceOptions = provinces.map(p => ({ value: p.value, label: p.label }))
+  const sportOptions = sports.map(s => ({ value: s, label: s }))
 
   const [filters, setFilters] = useState({
     city: currentFilters.city || '',
@@ -62,8 +65,6 @@ export function ShiftFilters({ provinces, eventTypes, sports, currentFilters }: 
     router.push('/therapist/shifts')
     setIsOpen(false)
   }
-
-  const sportOptions = sports.map(s => ({ value: s, label: s }))
 
   return (
     <div className="space-y-4">
@@ -104,7 +105,7 @@ export function ShiftFilters({ provinces, eventTypes, sports, currentFilters }: 
               name="province"
               value={filters.province}
               onChange={handleChange}
-              options={provinces}
+              options={provinceOptions}
               placeholder="All provinces"
             />
             <Select
