@@ -245,13 +245,13 @@ export default function RegisterTypePage() {
 
           <div className="text-sm text-gray-600">
             By registering, you agree to our{' '}
-            <a href="#" className="text-primary-600 hover:text-primary-500">
+            <Link href="/terms" className="text-primary-600 hover:text-primary-500">
               Terms of Service
-            </a>{' '}
+            </Link>{' '}
             and{' '}
-            <a href="#" className="text-primary-600 hover:text-primary-500">
+            <Link href="/privacy" className="text-primary-600 hover:text-primary-500">
               Privacy Policy
-            </a>
+            </Link>
             .
           </div>
 

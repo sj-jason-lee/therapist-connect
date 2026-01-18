@@ -49,23 +49,12 @@ export default async function OrganizerDashboardPage() {
     .eq('organizer_id', organizer?.id)
     .eq('status', 'filled')
 
-  // Get pending applications count
-  const { data: shiftsForApplications } = await supabase
-    .from('shifts')
-    .select('id')
-    .eq('organizer_id', organizer?.id)
-
-  const shiftIds = shiftsForApplications?.map(s => s.id) || []
-
-  let pendingApplicationsCount = 0
-  if (shiftIds.length > 0) {
-    const { count } = await supabase
-      .from('applications')
-      .select('*', { count: 'exact', head: true })
-      .in('shift_id', shiftIds)
-      .eq('status', 'pending')
-    pendingApplicationsCount = count || 0
-  }
+  // Get pending applications count using a join (fixes N+1 query)
+  const { count: pendingApplicationsCount } = await supabase
+    .from('applications')
+    .select('*, shifts!inner(organizer_id)', { count: 'exact', head: true })
+    .eq('shifts.organizer_id', organizer?.id)
+    .eq('status', 'pending')
 
   // Get recent shifts
   const { data: recentShifts } = await supabase
@@ -131,7 +120,7 @@ export default async function OrganizerDashboardPage() {
           <Users className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
             <h3 className="text-sm font-medium text-blue-800">
-              {pendingApplicationsCount} pending application{pendingApplicationsCount > 1 ? 's' : ''}
+              {pendingApplicationsCount || 0} pending application{pendingApplicationsCount > 1 ? 's' : ''}
             </h3>
             <p className="text-sm text-blue-700 mt-1">
               Therapists are waiting to hear back about your shifts.
@@ -181,7 +170,7 @@ export default async function OrganizerDashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-500">Pending Applications</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{pendingApplicationsCount}</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{pendingApplicationsCount || 0}</p>
               </div>
               <div className="h-12 w-12 bg-yellow-100 rounded-lg flex items-center justify-center">
                 <Users className="h-6 w-6 text-yellow-600" />

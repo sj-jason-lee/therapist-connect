@@ -100,6 +100,33 @@ export default function TherapistProfilePage() {
     setSaving(true)
     setError(null)
 
+    // Validate rate range
+    if (formData.hourly_rate_min && formData.hourly_rate_max) {
+      if (Number(formData.hourly_rate_min) > Number(formData.hourly_rate_max)) {
+        setError('Minimum hourly rate cannot be greater than maximum rate')
+        setSaving(false)
+        return
+      }
+    }
+
+    // Validate expiry dates are in the future
+    const today = new Date().toISOString().split('T')[0]
+    if (formData.cata_expiry && formData.cata_expiry < today) {
+      setError('CATA expiry date must be in the future')
+      setSaving(false)
+      return
+    }
+    if (formData.insurance_expiry && formData.insurance_expiry < today) {
+      setError('Insurance expiry date must be in the future')
+      setSaving(false)
+      return
+    }
+    if (formData.bls_expiry && formData.bls_expiry < today) {
+      setError('BLS expiry date must be in the future')
+      setSaving(false)
+      return
+    }
+
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
@@ -232,6 +259,7 @@ export default function TherapistProfilePage() {
                 type="date"
                 value={formData.cata_expiry}
                 onChange={handleChange}
+                min={new Date().toISOString().split('T')[0]}
               />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -257,6 +285,7 @@ export default function TherapistProfilePage() {
                 type="date"
                 value={formData.insurance_expiry}
                 onChange={handleChange}
+                min={new Date().toISOString().split('T')[0]}
               />
               <Input
                 label="BLS Certification Expiry"
@@ -264,6 +293,7 @@ export default function TherapistProfilePage() {
                 type="date"
                 value={formData.bls_expiry}
                 onChange={handleChange}
+                min={new Date().toISOString().split('T')[0]}
               />
             </div>
           </CardContent>

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -12,12 +12,15 @@ import { Textarea } from '@/components/ui/textarea'
 import { CANADIAN_PROVINCES, EVENT_TYPE_LABELS, COMMON_SPORTS } from '@/lib/constants'
 import { Loader2, ArrowLeft, Save } from 'lucide-react'
 
-export default function NewShiftPage() {
+export default function EditShiftPage() {
   const router = useRouter()
+  const params = useParams()
+  const shiftId = params.id as string
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [organizerId, setOrganizerId] = useState<string | null>(null)
+  const [notFound, setNotFound] = useState(false)
 
   const [formData, setFormData] = useState({
     title: '',
@@ -39,7 +42,7 @@ export default function NewShiftPage() {
   })
 
   useEffect(() => {
-    const loadOrganizer = async () => {
+    const loadShift = async () => {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
 
@@ -48,29 +51,63 @@ export default function NewShiftPage() {
         return
       }
 
+      // Get organizer to verify ownership
       const { data: organizer } = await supabase
         .from('organizers')
-        .select('id, city, province')
+        .select('id')
         .eq('user_id', user.id)
         .single()
 
-      if (organizer) {
-        setOrganizerId(organizer.id)
-        // Pre-fill city and province from organizer profile
-        if (organizer.city || organizer.province) {
-          setFormData(prev => ({
-            ...prev,
-            city: organizer.city || '',
-            province: organizer.province || '',
-          }))
-        }
+      if (!organizer) {
+        router.push('/organizer')
+        return
       }
+
+      // Load shift data
+      const { data: shift, error: shiftError } = await supabase
+        .from('shifts')
+        .select('*')
+        .eq('id', shiftId)
+        .eq('organizer_id', organizer.id)
+        .single()
+
+      if (shiftError || !shift) {
+        setNotFound(true)
+        setLoading(false)
+        return
+      }
+
+      // Can only edit open shifts
+      if (shift.status !== 'open') {
+        setError('Only open shifts can be edited')
+        setLoading(false)
+        return
+      }
+
+      setFormData({
+        title: shift.title || '',
+        description: shift.description || '',
+        event_type: shift.event_type || '',
+        sport: shift.sport || '',
+        venue_name: shift.venue_name || '',
+        address: shift.address || '',
+        city: shift.city || '',
+        province: shift.province || '',
+        postal_code: shift.postal_code || '',
+        date: shift.date || '',
+        start_time: shift.start_time || '',
+        end_time: shift.end_time || '',
+        hourly_rate: shift.hourly_rate?.toString() || '',
+        therapists_needed: shift.therapists_needed?.toString() || '1',
+        equipment_provided: shift.equipment_provided || '',
+        special_requirements: shift.special_requirements || '',
+      })
 
       setLoading(false)
     }
 
-    loadOrganizer()
-  }, [router])
+    loadShift()
+  }, [router, shiftId])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
@@ -84,12 +121,6 @@ export default function NewShiftPage() {
     e.preventDefault()
     setSaving(true)
     setError(null)
-
-    if (!organizerId) {
-      setError('Organizer profile not found')
-      setSaving(false)
-      return
-    }
 
     // Validation
     if (!formData.title || !formData.event_type || !formData.city || !formData.province ||
@@ -116,10 +147,9 @@ export default function NewShiftPage() {
 
     const supabase = createClient()
 
-    const { data, error: insertError } = await supabase
+    const { error: updateError } = await supabase
       .from('shifts')
-      .insert({
-        organizer_id: organizerId,
+      .update({
         title: formData.title,
         description: formData.description || null,
         event_type: formData.event_type,
@@ -136,24 +166,34 @@ export default function NewShiftPage() {
         therapists_needed: parseInt(formData.therapists_needed) || 1,
         equipment_provided: formData.equipment_provided || null,
         special_requirements: formData.special_requirements || null,
-        status: 'open',
       })
-      .select()
-      .single()
+      .eq('id', shiftId)
 
-    if (insertError) {
-      setError(insertError.message)
+    if (updateError) {
+      setError(updateError.message)
       setSaving(false)
       return
     }
 
-    router.push(`/organizer/shifts/${data.id}`)
+    router.push(`/organizer/shifts/${shiftId}`)
   }
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-secondary-600" />
+      </div>
+    )
+  }
+
+  if (notFound) {
+    return (
+      <div className="text-center py-12">
+        <h2 className="text-2xl font-bold text-gray-900">Shift not found</h2>
+        <p className="mt-2 text-gray-600">This shift doesn&apos;t exist or you don&apos;t have permission to edit it.</p>
+        <Link href="/organizer/shifts" className="mt-4 inline-block text-secondary-600 hover:text-secondary-500">
+          Back to shifts
+        </Link>
       </div>
     )
   }
@@ -177,14 +217,14 @@ export default function NewShiftPage() {
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-4">
         <Link
-          href="/organizer/shifts"
+          href={`/organizer/shifts/${shiftId}`}
           className="text-gray-600 hover:text-gray-900"
         >
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Post New Shift</h1>
-          <p className="text-gray-500 mt-1">Create a new shift listing for athletic therapists.</p>
+          <h1 className="text-2xl font-bold text-gray-900">Edit Shift</h1>
+          <p className="text-gray-500 mt-1">Update the shift details.</p>
         </div>
       </div>
 
@@ -386,14 +426,14 @@ export default function NewShiftPage() {
 
         {/* Submit Button */}
         <div className="flex items-center justify-end gap-4">
-          <Link href="/organizer/shifts">
+          <Link href={`/organizer/shifts/${shiftId}`}>
             <Button variant="outline" type="button">
               Cancel
             </Button>
           </Link>
           <Button type="submit" variant="secondary" loading={saving}>
             <Save className="h-4 w-4 mr-2" />
-            Post Shift
+            Save Changes
           </Button>
         </div>
       </form>

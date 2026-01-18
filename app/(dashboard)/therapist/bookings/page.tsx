@@ -93,7 +93,7 @@ export default function TherapistBookingsPage() {
     const checkOut = new Date()
     const checkIn = new Date(checkInTime)
     const hoursWorked = (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60)
-    const roundedHours = Math.round(hoursWorked * 4) / 4 // Round to nearest 15 min
+    const roundedHours = Math.max(0.5, Math.round(hoursWorked * 4) / 4) // Round to nearest 15 min, minimum 0.5 hours
 
     const amountDue = roundedHours * shift.hourly_rate
     const platformFee = amountDue * 0.20 // 20% platform fee

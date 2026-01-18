@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
 
 // Routes that don't require authentication
-const publicRoutes = ['/', '/login', '/register', '/api/auth/callback']
+const publicRoutes = ['/', '/login', '/register', '/forgot-password', '/reset-password', '/api/auth/callback', '/terms', '/privacy']
 
 // Routes that require specific user types
 const therapistRoutes = ['/therapist']
@@ -14,7 +14,14 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Allow public routes
-  if (publicRoutes.some(route => pathname === route || pathname.startsWith('/register/'))) {
+  const isPublicRoute = publicRoutes.some(route => {
+    if (route === '/') {
+      return pathname === '/'
+    }
+    return pathname === route || pathname.startsWith(route + '/')
+  })
+
+  if (isPublicRoute) {
     // If user is logged in and tries to access auth pages, redirect to dashboard
     if (user && (pathname === '/login' || pathname.startsWith('/register'))) {
       const { data: profile } = await supabase

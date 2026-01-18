@@ -11,13 +11,24 @@ import {
   DollarSign,
   Building2,
   Users,
-  Filter,
 } from 'lucide-react'
-import { formatCurrency, formatDate, formatTime } from '@/lib/utils'
-import { EVENT_TYPE_LABELS } from '@/lib/constants'
+import { formatDate, formatTime } from '@/lib/utils'
+import { EVENT_TYPE_LABELS, CANADIAN_PROVINCES, COMMON_SPORTS } from '@/lib/constants'
+import { ShiftFilters } from './shift-filters'
 
-export default async function TherapistShiftsPage() {
+interface PageProps {
+  searchParams: Promise<{
+    city?: string
+    province?: string
+    event_type?: string
+    sport?: string
+    min_rate?: string
+  }>
+}
+
+export default async function TherapistShiftsPage({ searchParams }: PageProps) {
   const supabase = createClient()
+  const params = await searchParams
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -29,8 +40,8 @@ export default async function TherapistShiftsPage() {
     .eq('user_id', user.id)
     .single()
 
-  // Get open shifts
-  const { data: shifts } = await supabase
+  // Build query with filters
+  let query = supabase
     .from('shifts')
     .select(`
       *,
@@ -42,7 +53,25 @@ export default async function TherapistShiftsPage() {
     `)
     .eq('status', 'open')
     .gte('date', new Date().toISOString().split('T')[0])
-    .order('date', { ascending: true })
+
+  // Apply filters from search params
+  if (params.city) {
+    query = query.ilike('city', `%${params.city}%`)
+  }
+  if (params.province) {
+    query = query.eq('province', params.province)
+  }
+  if (params.event_type) {
+    query = query.eq('event_type', params.event_type)
+  }
+  if (params.sport) {
+    query = query.eq('sport', params.sport)
+  }
+  if (params.min_rate) {
+    query = query.gte('hourly_rate', parseFloat(params.min_rate))
+  }
+
+  const { data: shifts } = await query.order('date', { ascending: true })
 
   // Get therapist's existing applications to filter out already-applied shifts
   const { data: applications } = await supabase
@@ -62,11 +91,15 @@ export default async function TherapistShiftsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Available Shifts</h1>
           <p className="text-gray-500 mt-1">Browse and apply to shifts in your area.</p>
         </div>
-        <Button variant="outline">
-          <Filter className="h-4 w-4 mr-2" />
-          Filters
-        </Button>
       </div>
+
+      {/* Filters */}
+      <ShiftFilters
+        provinces={CANADIAN_PROVINCES}
+        eventTypes={Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
+        sports={COMMON_SPORTS}
+        currentFilters={params}
+      />
 
       {/* Location Info */}
       {therapist?.city && (
