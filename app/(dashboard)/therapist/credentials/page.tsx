@@ -24,6 +24,7 @@ export default function TherapistCredentialsPage() {
   const [uploading, setUploading] = useState<string | null>(null)
   const [therapist, setTherapist] = useState<any>(null)
   const [documents, setDocuments] = useState<any[]>([])
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     loadData()
@@ -65,6 +66,7 @@ export default function TherapistCredentialsPage() {
     const file = e.target.files?.[0]
     if (!file || !therapist) return
 
+    setError(null)
     setUploading(documentType)
     const supabase = createClient()
 
@@ -78,6 +80,7 @@ export default function TherapistCredentialsPage() {
 
     if (uploadError) {
       console.error('Upload error:', uploadError)
+      setError(`Upload failed: ${uploadError.message}. Make sure the 'credentials' storage bucket exists in Supabase.`)
       setUploading(null)
       return
     }
@@ -98,6 +101,7 @@ export default function TherapistCredentialsPage() {
 
     if (insertError) {
       console.error('Insert error:', insertError)
+      setError(`Failed to save document record: ${insertError.message}`)
     }
 
     setUploading(null)
@@ -144,6 +148,16 @@ export default function TherapistCredentialsPage() {
           Upload your certifications and documents for verification.
         </p>
       </div>
+
+      {/* Error Message */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        </div>
+      )}
 
       {/* Verification Status */}
       <Card>
