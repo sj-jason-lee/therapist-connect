@@ -23,58 +23,83 @@ export default async function OrganizerDashboardPage() {
   if (!user) redirect('/login')
 
   // Get organizer profile
-  const { data: organizer } = await supabase
+  let { data: organizer } = await supabase
     .from('organizers')
     .select('*')
     .eq('user_id', user.id)
-    .single()
+    .maybeSingle()
+
+  // Create organizer record if it doesn't exist
+  if (!organizer) {
+    const { data: newOrganizer } = await supabase
+      .from('organizers')
+      .upsert({ user_id: user.id }, { onConflict: 'user_id' })
+      .select()
+      .single()
+    organizer = newOrganizer
+  }
 
   // Get profile info
   const { data: profile } = await supabase
     .from('profiles')
     .select('*')
     .eq('id', user.id)
-    .single()
+    .maybeSingle()
 
-  // Get shift stats
-  const { count: openShifts } = await supabase
-    .from('shifts')
-    .select('*', { count: 'exact', head: true })
-    .eq('organizer_id', organizer?.id)
-    .eq('status', 'open')
+  // Only query stats if organizer exists
+  let openShifts = 0
+  let filledShifts = 0
+  let pendingApplicationsCount = 0
 
-  const { count: filledShifts } = await supabase
-    .from('shifts')
-    .select('*', { count: 'exact', head: true })
-    .eq('organizer_id', organizer?.id)
-    .eq('status', 'filled')
+  if (organizer?.id) {
+    // Get shift stats
+    const { count: open } = await supabase
+      .from('shifts')
+      .select('*', { count: 'exact', head: true })
+      .eq('organizer_id', organizer.id)
+      .eq('status', 'open')
+    openShifts = open || 0
 
-  // Get pending applications count using a join (fixes N+1 query)
-  const { count: pendingApplicationsCount } = await supabase
-    .from('applications')
-    .select('*, shifts!inner(organizer_id)', { count: 'exact', head: true })
-    .eq('shifts.organizer_id', organizer?.id)
-    .eq('status', 'pending')
+    const { count: filled } = await supabase
+      .from('shifts')
+      .select('*', { count: 'exact', head: true })
+      .eq('organizer_id', organizer.id)
+      .eq('status', 'filled')
+    filledShifts = filled || 0
 
-  // Get recent shifts
-  const { data: recentShifts } = await supabase
-    .from('shifts')
-    .select('*')
-    .eq('organizer_id', organizer?.id)
-    .order('created_at', { ascending: false })
-    .limit(5)
+    // Get pending applications count
+    const { count: pending } = await supabase
+      .from('applications')
+      .select('*, shifts!inner(organizer_id)', { count: 'exact', head: true })
+      .eq('shifts.organizer_id', organizer.id)
+      .eq('status', 'pending')
+    pendingApplicationsCount = pending || 0
+  }
 
-  // Get total spent
-  const { data: completedBookings } = await supabase
-    .from('bookings')
-    .select('amount_due, shifts!inner(organizer_id)')
-    .eq('shifts.organizer_id', organizer?.id)
-    .eq('status', 'completed')
+  // Get recent shifts and total spent only if organizer exists
+  let recentShifts: any[] = []
+  let totalSpent = 0
 
-  const totalSpent = completedBookings?.reduce(
-    (sum, booking) => sum + (booking.amount_due || 0),
-    0
-  ) || 0
+  if (organizer?.id) {
+    const { data: shifts } = await supabase
+      .from('shifts')
+      .select('*')
+      .eq('organizer_id', organizer.id)
+      .order('created_at', { ascending: false })
+      .limit(5)
+    recentShifts = shifts || []
+
+    const { data: completedBookings } = await supabase
+      .from('bookings')
+      .select('amount_due, shifts!inner(organizer_id)')
+      .eq('shifts.organizer_id', organizer.id)
+      .eq('status', 'completed')
+
+    totalSpent = completedBookings?.reduce(
+      (sum, booking) => sum + (booking.amount_due || 0),
+      0
+    ) || 0
+  }
 
   const isProfileComplete = organizer?.organization_name && organizer?.city
 
@@ -115,12 +140,12 @@ export default async function OrganizerDashboardPage() {
       )}
 
       {/* Pending Applications Alert */}
-      {(pendingApplicationsCount ?? 0) > 0 && (
+      {pendingApplicationsCount > 0 && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
           <Users className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
             <h3 className="text-sm font-medium text-blue-800">
-              {pendingApplicationsCount || 0} pending application{(pendingApplicationsCount ?? 0) > 1 ? 's' : ''}
+              {pendingApplicationsCount} pending application{pendingApplicationsCount > 1 ? 's' : ''}
             </h3>
             <p className="text-sm text-blue-700 mt-1">
               Therapists are waiting to hear back about your shifts.
@@ -142,7 +167,7 @@ export default async function OrganizerDashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-500">Open Shifts</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{openShifts || 0}</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{openShifts}</p>
               </div>
               <div className="h-12 w-12 bg-blue-100 rounded-lg flex items-center justify-center">
                 <ClipboardList className="h-6 w-6 text-blue-600" />
@@ -156,7 +181,7 @@ export default async function OrganizerDashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-500">Filled Shifts</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{filledShifts || 0}</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{filledShifts}</p>
               </div>
               <div className="h-12 w-12 bg-green-100 rounded-lg flex items-center justify-center">
                 <CheckCircle className="h-6 w-6 text-green-600" />
@@ -170,7 +195,7 @@ export default async function OrganizerDashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-500">Pending Applications</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{pendingApplicationsCount || 0}</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{pendingApplicationsCount}</p>
               </div>
               <div className="h-12 w-12 bg-yellow-100 rounded-lg flex items-center justify-center">
                 <Users className="h-6 w-6 text-yellow-600" />
@@ -230,7 +255,7 @@ export default async function OrganizerDashboardPage() {
             </Link>
           </CardHeader>
           <CardContent>
-            {recentShifts && recentShifts.length > 0 ? (
+            {recentShifts.length > 0 ? (
               <div className="space-y-3">
                 {recentShifts.map((shift) => (
                   <Link

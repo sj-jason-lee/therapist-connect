@@ -24,14 +24,8 @@ export async function middleware(request: NextRequest) {
   if (isPublicRoute) {
     // If user is logged in and tries to access auth pages, redirect to dashboard
     if (user && (pathname === '/login' || pathname.startsWith('/register'))) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('user_type')
-        .eq('id', user.id)
-        .single()
-
-      // Use profile user_type, fallback to metadata, then default to therapist
-      const userType = profile?.user_type || user.user_metadata?.user_type || 'therapist'
+      // Use metadata only to avoid database query delays
+      const userType = user.user_metadata?.user_type || 'therapist'
       const dashboardUrl = `/${userType}`
       return NextResponse.redirect(new URL(dashboardUrl, request.url))
     }
@@ -45,39 +39,26 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl)
   }
 
-  // Get user profile to check role
-  const { data: profile, error: profileError } = await supabase
-    .from('profiles')
-    .select('user_type')
-    .eq('id', user.id)
-    .single()
-
-  // Fallback to user metadata if profile doesn't exist or query fails
-  const userType = profile?.user_type || user.user_metadata?.user_type || 'therapist'
-
-  if (profileError) {
-    console.error('Middleware profile fetch error:', profileError)
-  }
-
-  // Create a virtual profile object for role checking
-  const effectiveProfile = { user_type: userType }
+  // Use user metadata for role checking (faster, no DB query)
+  // The page itself will handle profile creation if needed
+  const userType = user.user_metadata?.user_type || 'therapist'
 
   // Check role-based access
   if (therapistRoutes.some(route => pathname.startsWith(route))) {
-    if (effectiveProfile.user_type !== 'therapist' && effectiveProfile.user_type !== 'admin') {
-      return NextResponse.redirect(new URL(`/${effectiveProfile.user_type}`, request.url))
+    if (userType !== 'therapist' && userType !== 'admin') {
+      return NextResponse.redirect(new URL(`/${userType}`, request.url))
     }
   }
 
   if (organizerRoutes.some(route => pathname.startsWith(route))) {
-    if (effectiveProfile.user_type !== 'organizer' && effectiveProfile.user_type !== 'admin') {
-      return NextResponse.redirect(new URL(`/${effectiveProfile.user_type}`, request.url))
+    if (userType !== 'organizer' && userType !== 'admin') {
+      return NextResponse.redirect(new URL(`/${userType}`, request.url))
     }
   }
 
   if (adminRoutes.some(route => pathname.startsWith(route))) {
-    if (effectiveProfile.user_type !== 'admin') {
-      return NextResponse.redirect(new URL(`/${effectiveProfile.user_type}`, request.url))
+    if (userType !== 'admin') {
+      return NextResponse.redirect(new URL(`/${userType}`, request.url))
     }
   }
 
