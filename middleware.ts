@@ -22,8 +22,8 @@ export async function middleware(request: NextRequest) {
   })
 
   if (isPublicRoute) {
-    // If user is logged in and tries to access auth pages, redirect to dashboard
-    if (user && (pathname === '/login' || pathname.startsWith('/register'))) {
+    // If user is logged in and tries to access auth pages or homepage, redirect to dashboard
+    if (user && (pathname === '/' || pathname === '/login' || pathname.startsWith('/register'))) {
       // Use metadata only to avoid database query delays
       const userType = user.user_metadata?.user_type || 'therapist'
       const dashboardUrl = `/${userType}`

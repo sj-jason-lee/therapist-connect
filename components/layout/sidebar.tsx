@@ -77,7 +77,12 @@ export function Sidebar({ userType }: SidebarProps) {
             <li>
               <ul role="list" className="-mx-2 space-y-1">
                 {navigation.map((item) => {
-                  const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
+                  // For dashboard (root paths like /therapist, /organizer), only match exactly
+                  // For other items, also match child routes
+                  const isDashboard = item.href === '/therapist' || item.href === '/organizer' || item.href === '/admin'
+                  const isActive = isDashboard
+                    ? pathname === item.href
+                    : pathname === item.href || pathname.startsWith(item.href + '/')
                   return (
                     <li key={item.name}>
                       <Link
