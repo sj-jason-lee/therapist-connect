@@ -36,6 +36,7 @@ const organizerNavigation = [
   { name: 'Organization Profile', href: '/organizer/profile', icon: User },
   { name: 'Post New Shift', href: '/organizer/shifts/new', icon: PlusCircle },
   { name: 'My Shifts', href: '/organizer/shifts', icon: ClipboardList },
+  { name: 'Applications', href: '/organizer/applications', icon: Users },
   { name: 'Bookings', href: '/organizer/bookings', icon: Calendar },
   { name: 'Payments', href: '/organizer/payments', icon: DollarSign },
 ]

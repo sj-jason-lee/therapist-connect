@@ -5,6 +5,7 @@ export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
   const next = searchParams.get('next') ?? '/'
+  const type = searchParams.get('type') // For password reset, etc.
 
   if (code) {
     const supabase = createClient()
@@ -29,9 +30,17 @@ export async function GET(request: Request) {
 
       // Determine user type: profile > metadata > default
       const userType = profile?.user_type || data.user.user_metadata?.user_type || 'therapist'
-      console.log('Auth callback redirecting to:', userType, 'profile:', profile?.user_type, 'metadata:', data.user.user_metadata?.user_type)
+      const dashboardUrl = `/${userType}`
 
-      return NextResponse.redirect(`${origin}/${userType}`)
+      // If this is a password reset, redirect to password change page
+      if (type === 'recovery') {
+        return NextResponse.redirect(`${origin}/auth/reset-password`)
+      }
+
+      // For email verification, show the nice welcome page
+      return NextResponse.redirect(
+        `${origin}/auth/verified?redirect=${encodeURIComponent(dashboardUrl)}&type=${userType}`
+      )
     }
   }
 

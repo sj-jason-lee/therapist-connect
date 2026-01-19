@@ -609,3 +609,53 @@ CREATE TRIGGER on_profile_created
 -- Storage bucket for credentials (run in Supabase dashboard or via API)
 -- INSERT INTO storage.buckets (id, name, public) VALUES ('credentials', 'credentials', false);
 -- INSERT INTO storage.buckets (id, name, public) VALUES ('profile-photos', 'profile-photos', true);
+
+-- =============================================
+-- STORAGE POLICIES FOR CREDENTIALS BUCKET
+-- Run these in Supabase Dashboard -> Storage -> credentials -> Policies
+-- Or via SQL Editor after creating the bucket
+-- =============================================
+
+-- Policy: Therapists can upload their own credentials
+-- Files are stored as {therapist_id}/{document_type}_{timestamp}.{ext}
+CREATE POLICY "Therapists can upload credentials"
+ON storage.objects FOR INSERT
+WITH CHECK (
+    bucket_id = 'credentials' AND
+    auth.uid() IS NOT NULL AND
+    (storage.foldername(name))[1] IN (
+        SELECT t.id::text FROM therapists t WHERE t.user_id = auth.uid()
+    )
+);
+
+-- Policy: Therapists can view their own credentials
+CREATE POLICY "Therapists can view own credentials"
+ON storage.objects FOR SELECT
+USING (
+    bucket_id = 'credentials' AND
+    (storage.foldername(name))[1] IN (
+        SELECT t.id::text FROM therapists t WHERE t.user_id = auth.uid()
+    )
+);
+
+-- Policy: Therapists can delete their own credentials
+CREATE POLICY "Therapists can delete own credentials"
+ON storage.objects FOR DELETE
+USING (
+    bucket_id = 'credentials' AND
+    (storage.foldername(name))[1] IN (
+        SELECT t.id::text FROM therapists t WHERE t.user_id = auth.uid()
+    )
+);
+
+-- Policy: Admins can view all credentials
+CREATE POLICY "Admins can view all credentials"
+ON storage.objects FOR SELECT
+USING (
+    bucket_id = 'credentials' AND
+    EXISTS (
+        SELECT 1 FROM profiles p
+        WHERE p.id = auth.uid()
+        AND p.user_type = 'admin'
+    )
+);
