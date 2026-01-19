@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -25,6 +25,7 @@ export default function TherapistCredentialsPage() {
   const [therapist, setTherapist] = useState<any>(null)
   const [documents, setDocuments] = useState<any[]>([])
   const [error, setError] = useState<string | null>(null)
+  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
   useEffect(() => {
     loadData()
@@ -64,7 +65,12 @@ export default function TherapistCredentialsPage() {
     documentType: string
   ) => {
     const file = e.target.files?.[0]
-    if (!file || !therapist) return
+    if (!file) return
+
+    if (!therapist) {
+      setError('Therapist profile not found. Please complete your profile first.')
+      return
+    }
 
     setError(null)
     setUploading(documentType)
@@ -155,6 +161,18 @@ export default function TherapistCredentialsPage() {
           <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
           <div>
             <p className="text-sm text-red-700">{error}</p>
+          </div>
+        </div>
+      )}
+
+      {/* No Therapist Profile Warning */}
+      {!therapist && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm text-yellow-700">
+              Please complete your <a href="/therapist/profile" className="underline font-medium">profile</a> before uploading credentials.
+            </p>
           </div>
         </div>
       )}
@@ -254,30 +272,34 @@ export default function TherapistCredentialsPage() {
                   </div>
                 ) : (
                   <div>
-                    <label className="block">
-                      <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-primary-500 transition-colors cursor-pointer">
-                        {isUploading ? (
-                          <Loader2 className="h-8 w-8 mx-auto animate-spin text-primary-600" />
-                        ) : (
-                          <>
-                            <Upload className="h-8 w-8 mx-auto text-gray-400 mb-2" />
-                            <p className="text-sm text-gray-600">
-                              Click to upload or drag and drop
-                            </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              PNG, JPG, or PDF up to 10MB
-                            </p>
-                          </>
-                        )}
-                      </div>
-                      <input
-                        type="file"
-                        className="hidden"
-                        accept="image/*,.pdf"
-                        onChange={(e) => handleFileUpload(e, docType)}
-                        disabled={isUploading}
-                      />
-                    </label>
+                    <input
+                      type="file"
+                      ref={(el) => { fileInputRefs.current[docType] = el }}
+                      className="hidden"
+                      accept="image/*,.pdf"
+                      onChange={(e) => handleFileUpload(e, docType)}
+                      disabled={isUploading}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRefs.current[docType]?.click()}
+                      disabled={isUploading}
+                      className="w-full border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-primary-500 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {isUploading ? (
+                        <Loader2 className="h-8 w-8 mx-auto animate-spin text-primary-600" />
+                      ) : (
+                        <>
+                          <Upload className="h-8 w-8 mx-auto text-gray-400 mb-2" />
+                          <p className="text-sm text-gray-600">
+                            Click to upload or drag and drop
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            PNG, JPG, or PDF up to 10MB
+                          </p>
+                        </>
+                      )}
+                    </button>
                   </div>
                 )}
               </CardContent>
