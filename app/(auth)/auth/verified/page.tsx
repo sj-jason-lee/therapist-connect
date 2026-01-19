@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { CheckCircle, Loader2, PartyPopper } from 'lucide-react'
 
-export default function EmailVerifiedPage() {
+function EmailVerifiedContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const redirectTo = searchParams.get('redirect') || '/therapist'
@@ -102,5 +102,24 @@ export default function EmailVerifiedPage() {
         </p>
       </div>
     </div>
+  )
+}
+
+function LoadingFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 via-white to-secondary-50">
+      <div className="text-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary-600 mx-auto" />
+        <p className="text-gray-500 mt-2">Loading...</p>
+      </div>
+    </div>
+  )
+}
+
+export default function EmailVerifiedPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <EmailVerifiedContent />
+    </Suspense>
   )
 }

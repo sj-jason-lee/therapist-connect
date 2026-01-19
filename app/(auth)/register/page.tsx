@@ -43,9 +43,14 @@ export default function RegisterPage() {
                 </p>
                 <ul className="mt-4 text-sm text-gray-500 space-y-2">
                   <li>Browse available shifts</li>
-                  <li>Set your own rates</li>
+                  <li>Set your own availability</li>
                   <li>Secure direct payments</li>
                 </ul>
+                <div className="mt-4 px-3 py-2 bg-primary-50 rounded-lg">
+                  <p className="text-xs text-primary-700">
+                    Earn <strong>100%</strong> of the posted rate &mdash; no fees deducted
+                  </p>
+                </div>
                 <div className="mt-6 inline-flex items-center text-primary-600 font-medium group-hover:gap-2 transition-all">
                   Get started
                   <ArrowRight className="h-4 w-4 ml-1 group-hover:translate-x-1 transition-transform" />
@@ -73,6 +78,11 @@ export default function RegisterPage() {
                   <li>Verified therapists only</li>
                   <li>Simple billing</li>
                 </ul>
+                <div className="mt-4 px-3 py-2 bg-secondary-50 rounded-lg">
+                  <p className="text-xs text-secondary-700">
+                    <strong>20% service fee</strong> on completed shifts
+                  </p>
+                </div>
                 <div className="mt-6 inline-flex items-center text-secondary-600 font-medium group-hover:gap-2 transition-all">
                   Get started
                   <ArrowRight className="h-4 w-4 ml-1 group-hover:translate-x-1 transition-transform" />

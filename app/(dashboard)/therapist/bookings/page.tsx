@@ -40,14 +40,20 @@ export default function TherapistBookingsPage() {
     }
 
     // Get therapist
-    const { data: therapist } = await supabase
+    const { data: therapist, error: therapistError } = await supabase
       .from('therapists')
       .select('id')
       .eq('user_id', user.id)
       .single()
 
+    // If no therapist profile, redirect to complete profile
+    if (!therapist || therapistError) {
+      router.push('/therapist/profile')
+      return
+    }
+
     // Get bookings with shift details
-    const { data: bookingsData } = await supabase
+    const { data: bookingsData, error: bookingsError } = await supabase
       .from('bookings')
       .select(`
         *,
@@ -59,8 +65,13 @@ export default function TherapistBookingsPage() {
           )
         )
       `)
-      .eq('therapist_id', therapist?.id)
+      .eq('therapist_id', therapist.id)
       .order('created_at', { ascending: false })
+
+    if (bookingsError) {
+      console.error('Error loading bookings:', bookingsError)
+    }
+    console.log('Bookings loaded:', bookingsData)
 
     setBookings(bookingsData || [])
     setLoading(false)
@@ -95,9 +106,10 @@ export default function TherapistBookingsPage() {
     const hoursWorked = (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60)
     const roundedHours = Math.max(0.5, Math.round(hoursWorked * 4) / 4) // Round to nearest 15 min, minimum 0.5 hours
 
-    const amountDue = roundedHours * shift.hourly_rate
-    const platformFee = amountDue * 0.20 // 20% platform fee
-    const therapistPayout = amountDue - platformFee
+    // Go4-style pricing: therapist gets 100% of rate, organizer pays rate + 20% fee
+    const therapistPayout = roundedHours * shift.hourly_rate // Therapist gets full rate
+    const platformFee = therapistPayout * 0.20 // 20% service fee charged to organizer
+    const amountDue = therapistPayout + platformFee // Total organizer pays
 
     const { error } = await supabase
       .from('bookings')

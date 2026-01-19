@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Users,
@@ -11,6 +10,7 @@ import {
   FileCheck,
   Loader2,
   ArrowRight,
+  AlertCircle,
 } from 'lucide-react'
 
 interface Stats {
@@ -22,6 +22,7 @@ interface Stats {
 
 export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [stats, setStats] = useState<Stats>({
     totalTherapists: 0,
     verifiedTherapists: 0,
@@ -34,38 +35,20 @@ export default function AdminDashboardPage() {
   }, [])
 
   const loadStats = async () => {
-    const supabase = createClient()
+    try {
+      const response = await fetch('/api/admin/stats')
+      const data = await response.json()
 
-    const [
-      { count: totalTherapists },
-      { count: verifiedTherapists },
-      { count: totalOrganizers },
-    ] = await Promise.all([
-      supabase.from('therapists').select('*', { count: 'exact', head: true }),
-      supabase.from('therapists').select('*', { count: 'exact', head: true }).eq('credentials_verified', true),
-      supabase.from('organizers').select('*', { count: 'exact', head: true }),
-    ])
+      if (!response.ok) {
+        setError(data.error || 'Failed to load stats')
+        setLoading(false)
+        return
+      }
 
-    // Get therapists with pending documents
-    const { data: therapistsWithDocs } = await supabase
-      .from('therapists')
-      .select(`
-        id,
-        credentials_verified,
-        credential_documents (id)
-      `)
-      .eq('credentials_verified', false)
-
-    const pendingVerifications = therapistsWithDocs?.filter(
-      t => t.credential_documents && t.credential_documents.length > 0
-    ).length || 0
-
-    setStats({
-      totalTherapists: totalTherapists || 0,
-      verifiedTherapists: verifiedTherapists || 0,
-      pendingVerifications,
-      totalOrganizers: totalOrganizers || 0,
-    })
+      setStats(data)
+    } catch (err) {
+      setError('An unexpected error occurred')
+    }
 
     setLoading(false)
   }
@@ -74,6 +57,20 @@ export default function AdminDashboardPage() {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-purple-600" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-6xl mx-auto">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-sm font-medium text-red-800">Error loading dashboard</h3>
+            <p className="text-sm text-red-700 mt-1">{error}</p>
+          </div>
+        </div>
       </div>
     )
   }

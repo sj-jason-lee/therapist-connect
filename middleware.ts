@@ -13,6 +13,9 @@ export async function middleware(request: NextRequest) {
   const { response, user, supabase } = await updateSession(request)
   const { pathname } = request.nextUrl
 
+  // Set pathname header for server components to access
+  response.headers.set('x-pathname', pathname)
+
   // Allow public routes
   const isPublicRoute = publicRoutes.some(route => {
     if (route === '/') {

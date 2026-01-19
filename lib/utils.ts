@@ -12,18 +12,25 @@ export function formatCurrency(amount: number): string {
   }).format(amount)
 }
 
-export function formatDate(date: Date | string): string {
+export function formatDate(date: Date | string | null | undefined): string {
+  if (!date) return 'N/A'
+  const d = new Date(date)
+  if (isNaN(d.getTime())) return 'N/A'
   return new Intl.DateTimeFormat('en-CA', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
-  }).format(new Date(date))
+  }).format(d)
 }
 
-export function formatTime(time: string): string {
-  const [hours, minutes] = time.split(':')
+export function formatTime(time: string | null | undefined): string {
+  if (!time) return 'N/A'
+  const parts = time.split(':')
+  if (parts.length < 2) return 'N/A'
+  const [hours, minutes] = parts
   const date = new Date()
   date.setHours(parseInt(hours), parseInt(minutes))
+  if (isNaN(date.getTime())) return 'N/A'
   return new Intl.DateTimeFormat('en-CA', {
     hour: 'numeric',
     minute: '2-digit',
@@ -31,8 +38,10 @@ export function formatTime(time: string): string {
   }).format(date)
 }
 
-export function formatRelativeTime(dateString: string): string {
+export function formatRelativeTime(dateString: string | null | undefined): string {
+  if (!dateString) return 'N/A'
   const date = new Date(dateString)
+  if (isNaN(date.getTime())) return 'N/A'
   const now = new Date()
   const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000)
 
@@ -83,12 +92,24 @@ function toRad(deg: number): number {
   return deg * (Math.PI / 180)
 }
 
-export const PLATFORM_FEE_PERCENTAGE = 0.20 // 20%
+export const PLATFORM_FEE_PERCENTAGE = 0.20 // 20% service fee charged to organizers
 
-export function calculatePlatformFee(amount: number): number {
-  return amount * PLATFORM_FEE_PERCENTAGE
+// Go4-style pricing model:
+// - Therapist earns 100% of the posted hourly rate
+// - Organizer pays the posted rate + 20% service fee
+// - Platform fee is charged ON TOP of the therapist rate (to organizer)
+
+export function calculatePlatformFee(therapistRate: number): number {
+  // Fee is 20% of the therapist rate, charged to organizer
+  return therapistRate * PLATFORM_FEE_PERCENTAGE
 }
 
-export function calculateTherapistPayout(amount: number): number {
-  return amount * (1 - PLATFORM_FEE_PERCENTAGE)
+export function calculateTherapistPayout(therapistRate: number): number {
+  // Therapist gets 100% of the posted rate
+  return therapistRate
+}
+
+export function calculateOrganizerTotal(therapistRate: number): number {
+  // Organizer pays therapist rate + platform fee
+  return therapistRate * (1 + PLATFORM_FEE_PERCENTAGE)
 }

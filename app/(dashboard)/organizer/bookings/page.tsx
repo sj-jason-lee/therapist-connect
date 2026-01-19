@@ -19,11 +19,16 @@ export default async function OrganizerBookingsPage() {
   if (!user) redirect('/login')
 
   // Get organizer
-  const { data: organizer } = await supabase
+  const { data: organizer, error: organizerError } = await supabase
     .from('organizers')
     .select('id')
     .eq('user_id', user.id)
     .single()
+
+  // If no organizer profile, redirect to complete profile
+  if (!organizer || organizerError) {
+    redirect('/organizer/profile')
+  }
 
   // Get all bookings for organizer's shifts
   const { data: bookings } = await supabase
@@ -39,7 +44,7 @@ export default async function OrganizerBookingsPage() {
         profile:profiles(full_name, email, phone)
       )
     `)
-    .eq('shift.organizer_id', organizer?.id)
+    .eq('shift.organizer_id', organizer.id)
     .order('created_at', { ascending: false })
 
   const getStatusVariant = (status: string) => {

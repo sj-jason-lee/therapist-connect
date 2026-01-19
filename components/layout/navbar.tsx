@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Menu, Bell, LogOut, User, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useMobileNav } from './mobile-nav-context'
 
 interface NavbarProps {
   user: {
@@ -18,7 +19,7 @@ interface NavbarProps {
 export function Navbar({ user }: NavbarProps) {
   const router = useRouter()
   const [dropdownOpen, setDropdownOpen] = useState(false)
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const { toggle: toggleMobileMenu } = useMobileNav()
 
   const handleSignOut = async () => {
     const supabase = createClient()
@@ -39,7 +40,7 @@ export function Navbar({ user }: NavbarProps) {
       <button
         type="button"
         className="-m-2.5 p-2.5 text-gray-700 lg:hidden"
-        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+        onClick={toggleMobileMenu}
       >
         <span className="sr-only">Open sidebar</span>
         <Menu className="h-6 w-6" aria-hidden="true" />

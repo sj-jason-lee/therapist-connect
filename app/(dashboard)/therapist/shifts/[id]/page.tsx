@@ -60,7 +60,7 @@ export default function ShiftDetailPage() {
       setTherapist(therapistData)
 
       // Get shift details
-      const { data: shiftData } = await supabase
+      const { data: shiftData, error: shiftError } = await supabase
         .from('shifts')
         .select(`
           *,
@@ -74,6 +74,10 @@ export default function ShiftDetailPage() {
         `)
         .eq('id', shiftId)
         .single()
+
+      if (shiftError) {
+        console.error('Error fetching shift:', shiftError)
+      }
 
       setShift(shiftData)
 

@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 
       // If this is a password reset, redirect to password change page
       if (type === 'recovery') {
-        return NextResponse.redirect(`${origin}/auth/reset-password`)
+        return NextResponse.redirect(`${origin}/reset-password`)
       }
 
       // For email verification, show the nice welcome page

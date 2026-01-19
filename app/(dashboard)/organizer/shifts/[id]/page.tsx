@@ -165,12 +165,12 @@ export default function OrganizerShiftDetailPage() {
       return
     }
 
-    // Cancel all pending applications
+    // Cancel all pending AND accepted applications
     await supabase
       .from('applications')
       .update({ status: 'rejected' })
       .eq('shift_id', shiftId)
-      .eq('status', 'pending')
+      .in('status', ['pending', 'accepted'])
 
     // Cancel any bookings
     await supabase

@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
+import { headers } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
-import { Sidebar } from '@/components/layout/sidebar'
-import { Navbar } from '@/components/layout/navbar'
+import { DashboardShell } from '@/components/layout/dashboard-shell'
 
 export default async function DashboardLayout({
   children,
@@ -73,6 +73,20 @@ export default async function DashboardLayout({
       .eq('user_id', user.id)
       .maybeSingle()
     roleData = therapist
+
+    // Check if therapist needs to complete onboarding
+    // Only redirect if they haven't completed AND are missing critical profile data
+    const needsOnboarding = !therapist.onboarding_completed &&
+      (!therapist.cata_number || !therapist.city || !therapist.province)
+
+    if (therapist && needsOnboarding) {
+      const headersList = await headers()
+      const pathname = headersList.get('x-pathname') || ''
+      // Don't redirect if already on onboarding page
+      if (!pathname.includes('/therapist/onboarding')) {
+        redirect('/therapist/onboarding')
+      }
+    }
   } else if (profile.user_type === 'organizer') {
     const { data: organizer } = await supabase
       .from('organizers')
@@ -88,14 +102,8 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Sidebar userType={profile.user_type} />
-      <div className="lg:pl-64">
-        <Navbar user={userData} />
-        <main className="py-6 px-4 sm:px-6 lg:px-8">
-          {children}
-        </main>
-      </div>
-    </div>
+    <DashboardShell userType={profile.user_type} user={userData}>
+      {children}
+    </DashboardShell>
   )
 }

@@ -1,7 +1,10 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+'use client'
+
+import { useState, useEffect } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -14,43 +17,128 @@ import {
   XCircle,
   ClipboardList,
   Eye,
+  Loader2,
+  X,
+  AlertCircle,
 } from 'lucide-react'
 import { formatDate, formatTime } from '@/lib/utils'
 import { EVENT_TYPE_LABELS } from '@/lib/constants'
 
-export default async function TherapistApplicationsPage() {
-  const supabase = createClient()
+interface Application {
+  id: string
+  status: string
+  message: string | null
+  created_at: string
+  shift_id: string
+  shift: {
+    id: string
+    title: string
+    date: string
+    start_time: string
+    end_time: string
+    hourly_rate: number
+    city: string
+    province: string
+    event_type: string
+    organizer: {
+      organization_name: string | null
+      profile: {
+        full_name: string
+      } | null
+    } | null
+  } | null
+}
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+export default function TherapistApplicationsPage() {
+  const router = useRouter()
+  const [loading, setLoading] = useState(true)
+  const [applications, setApplications] = useState<Application[]>([])
+  const [withdrawingId, setWithdrawingId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  // Get therapist
-  const { data: therapist } = await supabase
-    .from('therapists')
-    .select('id')
-    .eq('user_id', user.id)
-    .single()
+  useEffect(() => {
+    loadApplications()
+  }, [])
 
-  // Get all applications with shift details
-  const { data: applications } = await supabase
-    .from('applications')
-    .select(`
-      *,
-      shift:shifts(
+  const loadApplications = async () => {
+    const supabase = createClient()
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      router.push('/login')
+      return
+    }
+
+    // Get therapist
+    const { data: therapist } = await supabase
+      .from('therapists')
+      .select('id')
+      .eq('user_id', user.id)
+      .single()
+
+    if (!therapist) {
+      router.push('/therapist/profile')
+      return
+    }
+
+    // Get all applications with shift details
+    const { data } = await supabase
+      .from('applications')
+      .select(`
         *,
-        organizer:organizers(
-          organization_name,
-          profile:profiles(full_name)
+        shift:shifts(
+          *,
+          organizer:organizers(
+            organization_name,
+            profile:profiles(full_name)
+          )
+        )
+      `)
+      .eq('therapist_id', therapist.id)
+      .order('created_at', { ascending: false })
+
+    setApplications(data || [])
+    setLoading(false)
+  }
+
+  const handleWithdraw = async (applicationId: string) => {
+    if (!confirm('Are you sure you want to withdraw this application?')) {
+      return
+    }
+
+    setWithdrawingId(applicationId)
+    setError(null)
+
+    try {
+      const response = await fetch(`/api/therapist/applications/${applicationId}`, {
+        method: 'DELETE',
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setError(data.error || 'Failed to withdraw application')
+        setWithdrawingId(null)
+        return
+      }
+
+      // Update local state
+      setApplications(prev =>
+        prev.map(app =>
+          app.id === applicationId ? { ...app, status: 'withdrawn' } : app
         )
       )
-    `)
-    .eq('therapist_id', therapist?.id)
-    .order('created_at', { ascending: false })
+    } catch (err) {
+      setError('An unexpected error occurred')
+    }
 
-  const pendingApplications = applications?.filter(a => a.status === 'pending') || []
-  const acceptedApplications = applications?.filter(a => a.status === 'accepted') || []
-  const rejectedApplications = applications?.filter(a => a.status === 'rejected') || []
-  const withdrawnApplications = applications?.filter(a => a.status === 'withdrawn') || []
+    setWithdrawingId(null)
+  }
+
+  const pendingApplications = applications.filter(a => a.status === 'pending')
+  const acceptedApplications = applications.filter(a => a.status === 'accepted')
+  const rejectedApplications = applications.filter(a => a.status === 'rejected')
+  const withdrawnApplications = applications.filter(a => a.status === 'withdrawn')
 
   const getStatusVariant = (status: string) => {
     switch (status) {
@@ -67,11 +155,12 @@ export default async function TherapistApplicationsPage() {
       case 'pending': return <Clock className="h-4 w-4" />
       case 'accepted': return <CheckCircle className="h-4 w-4" />
       case 'rejected': return <XCircle className="h-4 w-4" />
+      case 'withdrawn': return <X className="h-4 w-4" />
       default: return null
     }
   }
 
-  const ApplicationCard = ({ application }: { application: any }) => (
+  const ApplicationCard = ({ application }: { application: Application }) => (
     <Card className="hover:shadow-md transition-shadow">
       <CardContent className="p-6">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -84,9 +173,11 @@ export default async function TherapistApplicationsPage() {
                 {getStatusIcon(application.status)}
                 <span className="ml-1 capitalize">{application.status}</span>
               </Badge>
-              <Badge variant="info">
-                {EVENT_TYPE_LABELS[application.shift?.event_type as keyof typeof EVENT_TYPE_LABELS]}
-              </Badge>
+              {application.shift?.event_type && (
+                <Badge variant="info">
+                  {EVENT_TYPE_LABELS[application.shift.event_type as keyof typeof EVENT_TYPE_LABELS]}
+                </Badge>
+              )}
             </div>
             <div className="flex items-center gap-1 mt-1 text-gray-600">
               <Building2 className="h-4 w-4" />
@@ -99,12 +190,14 @@ export default async function TherapistApplicationsPage() {
             <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="flex items-center gap-2 text-gray-600">
                 <Calendar className="h-4 w-4" />
-                <span className="text-sm">{formatDate(application.shift?.date)}</span>
+                <span className="text-sm">{application.shift?.date ? formatDate(application.shift.date) : 'N/A'}</span>
               </div>
               <div className="flex items-center gap-2 text-gray-600">
                 <Clock className="h-4 w-4" />
                 <span className="text-sm">
-                  {formatTime(application.shift?.start_time)} - {formatTime(application.shift?.end_time)}
+                  {application.shift?.start_time && application.shift?.end_time
+                    ? `${formatTime(application.shift.start_time)} - ${formatTime(application.shift.end_time)}`
+                    : 'N/A'}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-gray-600">
@@ -127,17 +220,52 @@ export default async function TherapistApplicationsPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <Link href={`/therapist/shifts/${application.shift_id}`}>
-              <Button variant="outline" size="sm">
-                <Eye className="h-4 w-4 mr-2" />
-                View Shift
+            {application.status === 'pending' && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleWithdraw(application.id)}
+                disabled={withdrawingId === application.id}
+                className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+              >
+                {withdrawingId === application.id ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <X className="h-4 w-4 mr-2" />
+                    Withdraw
+                  </>
+                )}
               </Button>
-            </Link>
+            )}
+            {application.status === 'accepted' ? (
+              <Link href="/therapist/bookings">
+                <Button variant="outline" size="sm">
+                  <Eye className="h-4 w-4 mr-2" />
+                  View Booking
+                </Button>
+              </Link>
+            ) : (
+              <Link href={`/therapist/shifts/${application.shift_id}`}>
+                <Button variant="outline" size="sm">
+                  <Eye className="h-4 w-4 mr-2" />
+                  View Shift
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
       </CardContent>
     </Card>
   )
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary-600" />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -145,6 +273,13 @@ export default async function TherapistApplicationsPage() {
         <h1 className="text-2xl font-bold text-gray-900">My Applications</h1>
         <p className="text-gray-500 mt-1">Track the status of your shift applications.</p>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -175,7 +310,7 @@ export default async function TherapistApplicationsPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="text-center">
-              <p className="text-2xl font-bold text-gray-600">{applications?.length || 0}</p>
+              <p className="text-2xl font-bold text-gray-600">{applications.length}</p>
               <p className="text-sm text-gray-500">Total</p>
             </div>
           </CardContent>
@@ -227,8 +362,23 @@ export default async function TherapistApplicationsPage() {
         </div>
       )}
 
+      {/* Withdrawn Applications */}
+      {withdrawnApplications.length > 0 && (
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <X className="h-5 w-5 text-gray-600" />
+            Withdrawn ({withdrawnApplications.length})
+          </h2>
+          <div className="space-y-4">
+            {withdrawnApplications.map((application) => (
+              <ApplicationCard key={application.id} application={application} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* No Applications */}
-      {(!applications || applications.length === 0) && (
+      {applications.length === 0 && (
         <Card>
           <CardContent className="py-12 text-center">
             <ClipboardList className="h-12 w-12 mx-auto text-gray-400 mb-4" />

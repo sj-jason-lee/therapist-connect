@@ -187,7 +187,7 @@ export default function AdminVerificationsPage() {
       {/* Filter Tabs */}
       <div className="flex gap-2">
         <Button
-          variant={filter === 'pending' ? 'default' : 'outline'}
+          variant={filter === 'pending' ? 'primary' : 'outline'}
           size="sm"
           onClick={() => setFilter('pending')}
         >
@@ -195,7 +195,7 @@ export default function AdminVerificationsPage() {
           Pending
         </Button>
         <Button
-          variant={filter === 'verified' ? 'default' : 'outline'}
+          variant={filter === 'verified' ? 'primary' : 'outline'}
           size="sm"
           onClick={() => setFilter('verified')}
         >
@@ -203,7 +203,7 @@ export default function AdminVerificationsPage() {
           Verified
         </Button>
         <Button
-          variant={filter === 'all' ? 'default' : 'outline'}
+          variant={filter === 'all' ? 'primary' : 'outline'}
           size="sm"
           onClick={() => setFilter('all')}
         >
