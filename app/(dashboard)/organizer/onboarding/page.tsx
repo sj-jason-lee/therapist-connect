@@ -118,10 +118,10 @@ export default function OrganizerOnboardingPage() {
       await createOrganizerProfile(user.uid, {
         organizationName: formData.organizationName,
         organizationType: formData.organizationType as any,
-        address: formData.address || undefined,
+        ...(formData.address && { address: formData.address }),
         city: formData.city,
         province: formData.province,
-        postalCode: formData.postalCode,
+        ...(formData.postalCode && { postalCode: formData.postalCode }),
       })
 
       // Mark onboarding complete

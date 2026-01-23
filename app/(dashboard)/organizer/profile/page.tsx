@@ -82,7 +82,7 @@ export default function OrganizerProfilePage() {
       // Update user profile
       await updateUserProfile(user.uid, {
         fullName: formData.full_name,
-        phone: formData.phone || undefined,
+        ...(formData.phone && { phone: formData.phone }),
       })
 
       // Build organizer profile update
