@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { useAuth } from '@/lib/firebase/AuthContext'
-import { getShift, Shift, createApplication, getApplicationsByTherapist } from '@/lib/firebase/firestore'
+import { getShift, Shift, createApplication, getApplicationsByTherapist, getUserProfile, getOrganizerProfile } from '@/lib/firebase/firestore'
+import { notifyApplicationSubmitted, notifyNewApplication } from '@/lib/notifications-client'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -74,7 +75,7 @@ export default function ShiftDetailPage() {
   }, [shiftId, user, authLoading])
 
   const handleApply = async () => {
-    if (!user || !shiftId) return
+    if (!user || !shiftId || !shift) return
 
     setApplying(true)
     setError(null)
@@ -83,6 +84,46 @@ export default function ShiftDetailPage() {
       await createApplication(shiftId, user.uid, applicationMessage || undefined)
       setHasApplied(true)
       setApplicationSuccess(true)
+
+      // Send email notifications (don't block on these)
+      const shiftDate = shift.date?.toDate?.()
+      const formattedDateForEmail = shiftDate
+        ? shiftDate.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+        : 'Date TBD'
+
+      // Get organizer info for notification
+      const [organizerUser, organizerProfile] = await Promise.all([
+        getUserProfile(shift.organizerId),
+        getOrganizerProfile(shift.organizerId),
+      ])
+
+      const therapistUser = await getUserProfile(user.uid)
+      const location = `${shift.city}, ${shift.province}`
+
+      // Notify therapist
+      if (therapistUser?.email) {
+        notifyApplicationSubmitted({
+          therapistEmail: therapistUser.email,
+          therapistName: therapistUser.fullName,
+          shiftTitle: shift.title,
+          shiftDate: formattedDateForEmail,
+          shiftTime: `${shift.startTime} - ${shift.endTime}`,
+          location,
+          organizerName: organizerProfile?.organizationName || 'Event Organizer',
+        }).catch(console.error)
+      }
+
+      // Notify organizer
+      if (organizerUser?.email) {
+        notifyNewApplication({
+          organizerEmail: organizerUser.email,
+          organizerName: organizerProfile?.organizationName || organizerUser.fullName,
+          therapistName: therapistUser?.fullName || 'A therapist',
+          shiftTitle: shift.title,
+          shiftDate: formattedDateForEmail,
+          message: applicationMessage || undefined,
+        }).catch(console.error)
+      }
     } catch (err) {
       console.error('Error applying to shift:', err)
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'

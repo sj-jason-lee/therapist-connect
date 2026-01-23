@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { useMobileNav } from './mobile-nav-context'
+import { useNotifications } from '@/hooks/use-notifications'
 import { X } from 'lucide-react'
 import {
   Home,
@@ -17,11 +18,13 @@ import {
   Users,
   CheckSquare,
   BarChart3,
+  MessageCircle,
 } from 'lucide-react'
 
 interface SidebarProps {
   userType: 'therapist' | 'organizer' | 'admin'
   isAdmin?: boolean
+  userId?: string
 }
 
 const therapistNavigation = [
@@ -31,6 +34,7 @@ const therapistNavigation = [
   { name: 'Find Shifts', href: '/therapist/shifts', icon: Search },
   { name: 'My Applications', href: '/therapist/applications', icon: ClipboardList },
   { name: 'My Bookings', href: '/therapist/bookings', icon: Calendar },
+  { name: 'Messages', href: '/therapist/messages', icon: MessageCircle },
   { name: 'Earnings', href: '/therapist/earnings', icon: DollarSign },
 ]
 
@@ -41,6 +45,7 @@ const organizerNavigation = [
   { name: 'My Shifts', href: '/organizer/shifts', icon: ClipboardList },
   { name: 'Applications', href: '/organizer/applications', icon: Users },
   { name: 'Bookings', href: '/organizer/bookings', icon: Calendar },
+  { name: 'Messages', href: '/organizer/messages', icon: MessageCircle },
   { name: 'Payments', href: '/organizer/payments', icon: DollarSign },
 ]
 
@@ -50,8 +55,19 @@ const adminNavigation = [
   { name: 'Users', href: '/admin/users', icon: Users },
 ]
 
-function SidebarContent({ userType, isAdmin, onNavigate }: { userType: SidebarProps['userType']; isAdmin?: boolean; onNavigate?: () => void }) {
+function NotificationBadge({ count }: { count: number }) {
+  if (count === 0) return null
+
+  return (
+    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-medium text-white">
+      {count > 99 ? '99+' : count}
+    </span>
+  )
+}
+
+function SidebarContent({ userType, isAdmin, userId, onNavigate }: { userType: SidebarProps['userType']; isAdmin?: boolean; userId?: string; onNavigate?: () => void }) {
   const pathname = usePathname()
+  const { counts } = useNotifications(userId || null, userType)
 
   // If user is admin, show admin navigation
   const navigation = isAdmin
@@ -69,6 +85,20 @@ function SidebarContent({ userType, isAdmin, onNavigate }: { userType: SidebarPr
     : userType === 'organizer'
     ? 'text-secondary-600'
     : 'text-purple-600'
+
+  // Get badge count for a navigation item
+  const getBadgeCount = (itemName: string): number => {
+    if (itemName === 'Messages') {
+      return counts.unreadMessages
+    }
+    if (itemName === 'Applications' && userType === 'organizer') {
+      return counts.pendingApplications
+    }
+    if (itemName === 'My Applications' && userType === 'therapist') {
+      return counts.acceptedApplications
+    }
+    return 0
+  }
 
   return (
     <div className="flex grow flex-col gap-y-5 overflow-y-auto bg-white px-6 pb-4">
@@ -88,6 +118,7 @@ function SidebarContent({ userType, isAdmin, onNavigate }: { userType: SidebarPr
                 const isActive = isDashboard
                   ? pathname === item.href
                   : pathname === item.href || pathname.startsWith(item.href + '/')
+                const badgeCount = getBadgeCount(item.name)
                 return (
                   <li key={item.name}>
                     <Link
@@ -108,6 +139,7 @@ function SidebarContent({ userType, isAdmin, onNavigate }: { userType: SidebarPr
                         aria-hidden="true"
                       />
                       {item.name}
+                      <NotificationBadge count={badgeCount} />
                     </Link>
                   </li>
                 )
@@ -120,7 +152,7 @@ function SidebarContent({ userType, isAdmin, onNavigate }: { userType: SidebarPr
   )
 }
 
-export function Sidebar({ userType, isAdmin }: SidebarProps) {
+export function Sidebar({ userType, isAdmin, userId }: SidebarProps) {
   const { isOpen, close } = useMobileNav()
 
   return (
@@ -128,7 +160,7 @@ export function Sidebar({ userType, isAdmin }: SidebarProps) {
       {/* Desktop Sidebar */}
       <div className="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-64 lg:flex-col">
         <div className="flex grow flex-col border-r border-gray-200">
-          <SidebarContent userType={userType} isAdmin={isAdmin} />
+          <SidebarContent userType={userType} isAdmin={isAdmin} userId={userId} />
         </div>
       </div>
 
@@ -172,7 +204,7 @@ export function Sidebar({ userType, isAdmin }: SidebarProps) {
               </button>
             </div>
 
-            <SidebarContent userType={userType} isAdmin={isAdmin} onNavigate={close} />
+            <SidebarContent userType={userType} isAdmin={isAdmin} userId={userId} onNavigate={close} />
           </div>
         </div>
       </div>

@@ -17,10 +17,15 @@ interface ShiftFiltersProps {
     event_type?: string
     sport?: string
     min_rate?: string
+    my_area?: boolean
+  }
+  therapistLocation?: {
+    city?: string
+    province?: string
   }
 }
 
-export function ShiftFilters({ provinces, eventTypes, sports, currentFilters }: ShiftFiltersProps) {
+export function ShiftFilters({ provinces, eventTypes, sports, currentFilters, therapistLocation }: ShiftFiltersProps) {
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
 
@@ -34,9 +39,13 @@ export function ShiftFilters({ provinces, eventTypes, sports, currentFilters }: 
     event_type: currentFilters.event_type || '',
     sport: currentFilters.sport || '',
     min_rate: currentFilters.min_rate || '',
+    my_area: currentFilters.my_area || false,
   })
 
-  const hasActiveFilters = Object.values(currentFilters).some(v => v)
+  const hasActiveFilters = Object.entries(currentFilters).some(([key, v]) => {
+    if (key === 'my_area') return v === true
+    return !!v
+  })
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target
@@ -47,7 +56,7 @@ export function ShiftFilters({ provinces, eventTypes, sports, currentFilters }: 
     const params = new URLSearchParams()
     Object.entries(filters).forEach(([key, value]) => {
       if (value) {
-        params.set(key, value)
+        params.set(key, String(value))
       }
     })
     router.push(`/therapist/shifts?${params.toString()}`)
@@ -61,14 +70,36 @@ export function ShiftFilters({ provinces, eventTypes, sports, currentFilters }: 
       event_type: '',
       sport: '',
       min_rate: '',
+      my_area: false,
     })
     router.push('/therapist/shifts')
     setIsOpen(false)
   }
 
+  const toggleMyArea = () => {
+    const newMyArea = !filters.my_area
+    setFilters(prev => ({ ...prev, my_area: newMyArea }))
+    const params = new URLSearchParams()
+    Object.entries({ ...filters, my_area: newMyArea }).forEach(([key, value]) => {
+      if (value) {
+        params.set(key, String(value))
+      }
+    })
+    router.push(`/therapist/shifts?${params.toString()}`)
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        {therapistLocation?.city && (
+          <Button
+            variant={filters.my_area ? 'primary' : 'outline'}
+            onClick={toggleMyArea}
+            size="sm"
+          >
+            {filters.my_area ? '✓ ' : ''}My Area ({therapistLocation.city})
+          </Button>
+        )}
         <Button
           variant="outline"
           onClick={() => setIsOpen(!isOpen)}

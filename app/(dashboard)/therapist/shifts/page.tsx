@@ -38,6 +38,7 @@ export default function TherapistShiftsPage() {
     event_type: searchParams.get('event_type') || '',
     sport: searchParams.get('sport') || '',
     min_rate: searchParams.get('min_rate') || '',
+    my_area: searchParams.get('my_area') === 'true',
   }
 
   useEffect(() => {
@@ -71,6 +72,16 @@ export default function TherapistShiftsPage() {
           filteredShifts = filteredShifts.filter(s => s.hourlyRate >= minRate)
         }
 
+        // Filter by therapist's area if enabled
+        if (filters.my_area && therapist) {
+          filteredShifts = filteredShifts.filter(s => {
+            // Match city (case insensitive) or province
+            const cityMatch = therapist.city && s.city?.toLowerCase() === therapist.city.toLowerCase()
+            const provinceMatch = therapist.province && s.province === therapist.province
+            return cityMatch || provinceMatch
+          })
+        }
+
         // Sort by date ascending (soonest first)
         filteredShifts.sort((a, b) => {
           const dateA = a.date?.toDate?.() || new Date(0)
@@ -90,7 +101,7 @@ export default function TherapistShiftsPage() {
     if (!authLoading) {
       fetchShifts()
     }
-  }, [authLoading, filters.city, filters.province, filters.event_type, filters.sport, filters.min_rate])
+  }, [authLoading, therapist, filters.city, filters.province, filters.event_type, filters.sport, filters.min_rate, filters.my_area])
 
   if (authLoading || loading) {
     return (
@@ -135,6 +146,7 @@ export default function TherapistShiftsPage() {
         eventTypes={Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
         sports={COMMON_SPORTS}
         currentFilters={filters}
+        therapistLocation={therapist ? { city: therapist.city, province: therapist.province } : undefined}
       />
 
       {/* Location Info */}

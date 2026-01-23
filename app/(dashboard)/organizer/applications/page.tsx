@@ -7,13 +7,15 @@ import {
   getApplicationsByShift,
   getUserProfile,
   getTherapistProfile,
+  getOrganizerProfile,
   updateApplication,
-  createBooking,
+  acceptApplicationWithTransaction,
   Application,
   Shift,
   UserProfile,
   TherapistProfile,
 } from '@/lib/firebase/firestore'
+import { notifyApplicationStatus, notifyBookingConfirmed } from '@/lib/notifications-client'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -27,7 +29,10 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
+  AlertTriangle,
   User,
+  CreditCard,
+  Star,
 } from 'lucide-react'
 
 const STATUS_COLORS: Record<string, string> = {
@@ -101,21 +106,77 @@ export default function OrganizerApplicationsPage() {
     }
   }, [user, authLoading])
 
-  const handleAccept = async (app: ApplicationWithDetails) => {
+  const handleAccept = async (app: ApplicationWithDetails, confirmed: boolean = false) => {
+    if (!user) return
+
+    // Check if therapist has Stripe account set up
+    const hasStripeAccount = !!app.therapistProfile?.stripeAccountId
+    if (!hasStripeAccount && !confirmed) {
+      const proceed = window.confirm(
+        `${app.therapistUser?.fullName || 'This therapist'} has not set up their payout account yet. ` +
+        `You won't be able to pay them until they complete Stripe setup.\n\n` +
+        `Do you want to accept this application anyway?`
+      )
+      if (!proceed) return
+    }
+
     setActionLoading(app.id)
     setError(null)
 
     try {
-      await updateApplication(app.id, { status: 'accepted' })
-      await createBooking({
-        shiftId: app.shiftId,
-        therapistId: app.therapistId,
-        applicationId: app.id,
-      })
+      // Use transaction-safe acceptance to prevent race conditions
+      const result = await acceptApplicationWithTransaction(
+        app.id,
+        app.shiftId,
+        app.therapistId
+      )
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to accept application')
+      }
 
       setApplications(prev =>
         prev.map(a => a.id === app.id ? { ...a, status: 'accepted' } : a)
       )
+
+      // Send notifications (don't block on these)
+      const shift = app.shift
+      if (shift && app.therapistUser?.email) {
+        const shiftDate = shift.date?.toDate?.()
+        const formattedDate = shiftDate
+          ? shiftDate.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+          : 'Date TBD'
+        const location = `${shift.city}, ${shift.province}`
+        const address = shift.address || location
+
+        // Get organizer profile for the name
+        const organizerProfile = await getOrganizerProfile(user.uid)
+
+        // Notify therapist about acceptance
+        notifyApplicationStatus({
+          therapistEmail: app.therapistUser.email,
+          therapistName: app.therapistUser.fullName,
+          shiftTitle: shift.title,
+          shiftDate: formattedDate,
+          shiftTime: `${shift.startTime} - ${shift.endTime}`,
+          location,
+          status: 'accepted',
+        }).catch(console.error)
+
+        // Send booking confirmation to therapist
+        notifyBookingConfirmed({
+          recipientEmail: app.therapistUser.email,
+          recipientName: app.therapistUser.fullName,
+          recipientType: 'therapist',
+          shiftTitle: shift.title,
+          shiftDate: formattedDate,
+          shiftTime: `${shift.startTime} - ${shift.endTime}`,
+          location,
+          address,
+          hourlyRate: shift.hourlyRate,
+          otherPartyName: organizerProfile?.organizationName || 'Event Organizer',
+        }).catch(console.error)
+      }
     } catch (err) {
       console.error('Error accepting application:', err)
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
@@ -131,9 +192,33 @@ export default function OrganizerApplicationsPage() {
 
     try {
       await updateApplication(applicationId, { status: 'rejected' })
+
+      // Find the application to get therapist info for notification
+      const app = applications.find(a => a.id === applicationId)
+
       setApplications(prev =>
         prev.map(a => a.id === applicationId ? { ...a, status: 'rejected' } : a)
       )
+
+      // Send notification (don't block on this)
+      const shift = app?.shift
+      if (shift && app?.therapistUser?.email) {
+        const shiftDate = shift.date?.toDate?.()
+        const formattedDate = shiftDate
+          ? shiftDate.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+          : 'Date TBD'
+        const location = `${shift.city}, ${shift.province}`
+
+        notifyApplicationStatus({
+          therapistEmail: app.therapistUser.email,
+          therapistName: app.therapistUser.fullName,
+          shiftTitle: shift.title,
+          shiftDate: formattedDate,
+          shiftTime: `${shift.startTime} - ${shift.endTime}`,
+          location,
+          status: 'rejected',
+        }).catch(console.error)
+      }
     } catch (err) {
       console.error('Error rejecting application:', err)
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
@@ -272,6 +357,12 @@ export default function OrganizerApplicationsPage() {
                             Verified
                           </Badge>
                         )}
+                        {!app.therapistProfile?.stripeAccountId && (
+                          <Badge className="bg-orange-100 text-orange-800">
+                            <AlertTriangle className="h-3 w-3 mr-1" />
+                            No Payout Setup
+                          </Badge>
+                        )}
                       </div>
 
                       <p className="text-sm text-gray-500 mt-1">
@@ -279,7 +370,23 @@ export default function OrganizerApplicationsPage() {
                         {app.therapistProfile?.hourlyRateMin && (
                           <span> · ${app.therapistProfile.hourlyRateMin}/hr min</span>
                         )}
+                        {(app.therapistProfile as any)?.averageRating > 0 && (
+                          <span className="inline-flex items-center ml-2">
+                            <Star className="h-3 w-3 text-yellow-400 fill-yellow-400" />
+                            <span className="ml-0.5">{(app.therapistProfile as any).averageRating.toFixed(1)}</span>
+                            {(app.therapistProfile as any)?.totalReviews > 0 && (
+                              <span className="text-gray-400 ml-1">({(app.therapistProfile as any).totalReviews})</span>
+                            )}
+                          </span>
+                        )}
                       </p>
+
+                      {/* Therapist Bio */}
+                      {app.therapistProfile?.bio && (
+                        <p className="text-sm text-gray-600 mt-2 line-clamp-2">
+                          {app.therapistProfile.bio}
+                        </p>
+                      )}
 
                       {/* Shift Info */}
                       {shift && (

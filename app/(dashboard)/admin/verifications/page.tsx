@@ -10,6 +10,7 @@ import {
   rejectCredentialDocument,
   TherapistWithProfile,
 } from '@/lib/firebase/firestore'
+import { notifyCredentialsVerified } from '@/lib/notifications-client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -99,6 +100,14 @@ export default function AdminVerificationsPage() {
     try {
       await verifyTherapistCredentials(therapist.id, user.uid)
       await loadData()
+
+      // Send notification to therapist
+      if (therapist.profile?.email) {
+        notifyCredentialsVerified({
+          therapistEmail: therapist.profile.email,
+          therapistName: therapist.profile.fullName,
+        }).catch(console.error)
+      }
     } catch (err) {
       console.error('Error approving all:', err)
       setError('Failed to approve documents')

@@ -135,6 +135,39 @@ export default function TherapistDashboardPage() {
   const isProfileComplete = therapist?.cataNumber && therapist?.city && therapist?.province
   const isCredentialsVerified = therapist?.credentialsVerified
 
+  // Check for expiring/expired credentials
+  const now = new Date()
+  const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+
+  const getExpiryStatus = (expiryDate: any) => {
+    if (!expiryDate) return null
+    const date = expiryDate?.toDate?.() || new Date(expiryDate)
+    if (isNaN(date.getTime())) return null
+    if (date < now) return 'expired'
+    if (date < thirtyDaysFromNow) return 'expiring'
+    return 'valid'
+  }
+
+  const cataStatus = getExpiryStatus(therapist?.cataExpiry)
+  const insuranceStatus = getExpiryStatus(therapist?.insuranceExpiry)
+  const blsStatus = getExpiryStatus(therapist?.blsExpiry)
+
+  const hasExpiryWarning = cataStatus === 'expired' || cataStatus === 'expiring' ||
+    insuranceStatus === 'expired' || insuranceStatus === 'expiring' ||
+    blsStatus === 'expired' || blsStatus === 'expiring'
+
+  const expiredCredentials = [
+    cataStatus === 'expired' && 'CATA Certification',
+    insuranceStatus === 'expired' && 'Liability Insurance',
+    blsStatus === 'expired' && 'BLS Certification',
+  ].filter(Boolean)
+
+  const expiringCredentials = [
+    cataStatus === 'expiring' && 'CATA Certification',
+    insuranceStatus === 'expiring' && 'Liability Insurance',
+    blsStatus === 'expiring' && 'BLS Certification',
+  ].filter(Boolean)
+
   return (
     <div className="space-y-6">
       <div>
@@ -176,6 +209,49 @@ export default function TherapistDashboardPage() {
                 <Link
                   href="/therapist/credentials"
                   className="text-sm font-medium text-blue-800 hover:text-blue-900 mt-2 inline-flex items-center"
+                >
+                  View credentials <ArrowRight className="h-4 w-4 ml-1" />
+                </Link>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Credential Expiry Warnings */}
+      {hasExpiryWarning && (
+        <div className="space-y-3">
+          {expiredCredentials.length > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="text-sm font-medium text-red-800">Expired Credentials</h3>
+                <p className="text-sm text-red-700 mt-1">
+                  The following credentials have expired: {expiredCredentials.join(', ')}.
+                  Please update them to continue accepting shifts.
+                </p>
+                <Link
+                  href="/therapist/credentials"
+                  className="text-sm font-medium text-red-800 hover:text-red-900 mt-2 inline-flex items-center"
+                >
+                  Update credentials <ArrowRight className="h-4 w-4 ml-1" />
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {expiringCredentials.length > 0 && (
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="text-sm font-medium text-orange-800">Credentials Expiring Soon</h3>
+                <p className="text-sm text-orange-700 mt-1">
+                  The following credentials will expire within 30 days: {expiringCredentials.join(', ')}.
+                  Please renew them to avoid interruption.
+                </p>
+                <Link
+                  href="/therapist/credentials"
+                  className="text-sm font-medium text-orange-800 hover:text-orange-900 mt-2 inline-flex items-center"
                 >
                   View credentials <ArrowRight className="h-4 w-4 ml-1" />
                 </Link>
@@ -298,20 +374,52 @@ export default function TherapistDashboardPage() {
                       })
                     : 'TBD'
 
+                  // Calculate urgency badge
+                  const getUrgencyBadge = () => {
+                    if (!shiftDate) return null
+                    const today = new Date()
+                    today.setHours(0, 0, 0, 0)
+                    const tomorrow = new Date(today)
+                    tomorrow.setDate(tomorrow.getDate() + 1)
+                    const shiftDay = new Date(shiftDate)
+                    shiftDay.setHours(0, 0, 0, 0)
+
+                    if (shiftDay.getTime() === today.getTime()) {
+                      return <Badge className="bg-red-100 text-red-800 text-xs">Today</Badge>
+                    }
+                    if (shiftDay.getTime() === tomorrow.getTime()) {
+                      return <Badge className="bg-orange-100 text-orange-800 text-xs">Tomorrow</Badge>
+                    }
+                    return null
+                  }
+
+                  const urgencyBadge = getUrgencyBadge()
+
                   return (
-                    <div key={booking.id} className="p-3 bg-gray-50 rounded-lg">
-                      <p className="font-medium text-gray-900">{shift?.title || 'Unknown Shift'}</p>
-                      <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
-                        <span className="flex items-center gap-1">
-                          <Calendar className="h-3 w-3" />
-                          {formattedDate}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <MapPin className="h-3 w-3" />
-                          {shift?.city}
-                        </span>
+                    <Link key={booking.id} href="/therapist/bookings">
+                      <div className={`p-3 rounded-lg hover:shadow-sm transition-shadow cursor-pointer ${
+                        urgencyBadge ? 'bg-yellow-50 border border-yellow-200' : 'bg-gray-50'
+                      }`}>
+                        <div className="flex items-start justify-between">
+                          <p className="font-medium text-gray-900">{shift?.title || 'Unknown Shift'}</p>
+                          {urgencyBadge}
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
+                          <span className="flex items-center gap-1">
+                            <Calendar className="h-3 w-3" />
+                            {formattedDate}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {shift?.startTime}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <MapPin className="h-3 w-3" />
+                            {shift?.city}
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                    </Link>
                   )
                 })}
                 <Link href="/therapist/bookings" className="text-primary-600 hover:text-primary-700 text-sm block text-center">
@@ -326,48 +434,95 @@ export default function TherapistDashboardPage() {
       {/* Verification Status */}
       <Card>
         <CardHeader>
-          <CardTitle>Verification Status</CardTitle>
+          <CardTitle>Credential Status</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-              {therapist?.cataNumber ? (
+            <div className={`flex items-center gap-3 p-3 rounded-lg ${
+              cataStatus === 'expired' ? 'bg-red-50' :
+              cataStatus === 'expiring' ? 'bg-orange-50' :
+              therapist?.cataNumber ? 'bg-green-50' : 'bg-gray-50'
+            }`}>
+              {cataStatus === 'expired' ? (
+                <AlertCircle className="h-5 w-5 text-red-600" />
+              ) : cataStatus === 'expiring' ? (
+                <AlertCircle className="h-5 w-5 text-orange-600" />
+              ) : therapist?.cataNumber ? (
                 <CheckCircle className="h-5 w-5 text-green-600" />
               ) : (
                 <AlertCircle className="h-5 w-5 text-gray-400" />
               )}
               <div>
                 <p className="font-medium text-gray-900">CATA Certification</p>
-                <p className="text-sm text-gray-500">
+                <p className={`text-sm ${
+                  cataStatus === 'expired' ? 'text-red-600 font-medium' :
+                  cataStatus === 'expiring' ? 'text-orange-600' : 'text-gray-500'
+                }`}>
                   {therapist?.cataNumber ? `#${therapist.cataNumber}` : 'Not provided'}
+                  {therapist?.cataExpiry && (
+                    <span className="block">
+                      {cataStatus === 'expired' ? 'Expired' : 'Expires'}: {therapist.cataExpiry?.toDate?.()?.toLocaleDateString('en-CA') || 'N/A'}
+                    </span>
+                  )}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-              {therapist?.insurancePolicyNumber ? (
+            <div className={`flex items-center gap-3 p-3 rounded-lg ${
+              insuranceStatus === 'expired' ? 'bg-red-50' :
+              insuranceStatus === 'expiring' ? 'bg-orange-50' :
+              therapist?.insurancePolicyNumber ? 'bg-green-50' : 'bg-gray-50'
+            }`}>
+              {insuranceStatus === 'expired' ? (
+                <AlertCircle className="h-5 w-5 text-red-600" />
+              ) : insuranceStatus === 'expiring' ? (
+                <AlertCircle className="h-5 w-5 text-orange-600" />
+              ) : therapist?.insurancePolicyNumber ? (
                 <CheckCircle className="h-5 w-5 text-green-600" />
               ) : (
                 <AlertCircle className="h-5 w-5 text-gray-400" />
               )}
               <div>
                 <p className="font-medium text-gray-900">Liability Insurance</p>
-                <p className="text-sm text-gray-500">
+                <p className={`text-sm ${
+                  insuranceStatus === 'expired' ? 'text-red-600 font-medium' :
+                  insuranceStatus === 'expiring' ? 'text-orange-600' : 'text-gray-500'
+                }`}>
                   {therapist?.insuranceProvider || 'Not provided'}
+                  {therapist?.insuranceExpiry && (
+                    <span className="block">
+                      {insuranceStatus === 'expired' ? 'Expired' : 'Expires'}: {therapist.insuranceExpiry?.toDate?.()?.toLocaleDateString('en-CA') || 'N/A'}
+                    </span>
+                  )}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-              {therapist?.blsExpiry ? (
+            <div className={`flex items-center gap-3 p-3 rounded-lg ${
+              blsStatus === 'expired' ? 'bg-red-50' :
+              blsStatus === 'expiring' ? 'bg-orange-50' :
+              therapist?.blsExpiry ? 'bg-green-50' : 'bg-gray-50'
+            }`}>
+              {blsStatus === 'expired' ? (
+                <AlertCircle className="h-5 w-5 text-red-600" />
+              ) : blsStatus === 'expiring' ? (
+                <AlertCircle className="h-5 w-5 text-orange-600" />
+              ) : therapist?.blsExpiry ? (
                 <CheckCircle className="h-5 w-5 text-green-600" />
               ) : (
                 <AlertCircle className="h-5 w-5 text-gray-400" />
               )}
               <div>
                 <p className="font-medium text-gray-900">BLS Certification</p>
-                <p className="text-sm text-gray-500">
-                  {therapist?.blsExpiry ? `Expires: ${therapist.blsExpiry}` : 'Not provided'}
+                <p className={`text-sm ${
+                  blsStatus === 'expired' ? 'text-red-600 font-medium' :
+                  blsStatus === 'expiring' ? 'text-orange-600' : 'text-gray-500'
+                }`}>
+                  {therapist?.blsExpiry ? (
+                    <>
+                      {blsStatus === 'expired' ? 'Expired' : 'Expires'}: {therapist.blsExpiry?.toDate?.()?.toLocaleDateString('en-CA') || 'N/A'}
+                    </>
+                  ) : 'Not provided'}
                 </p>
               </div>
             </div>
