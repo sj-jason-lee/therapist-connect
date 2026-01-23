@@ -1,5 +1,8 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useAuth } from '@/lib/firebase/AuthContext'
+import { getBookingsByTherapist, getShift, Booking, Shift } from '@/lib/firebase/firestore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -7,48 +10,100 @@ import {
   TrendingUp,
   Calendar,
   Clock,
-  Building2,
+  Loader2,
+  CheckCircle,
 } from 'lucide-react'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency } from '@/lib/utils'
 
-export default async function TherapistEarningsPage() {
-  const supabase = createClient()
+interface BookingWithShift extends Booking {
+  shift?: Shift | null
+}
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+export default function TherapistEarningsPage() {
+  const { user, loading: authLoading } = useAuth()
+  const [bookings, setBookings] = useState<BookingWithShift[]>([])
+  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState({
+    totalEarnings: 0,
+    paidOut: 0,
+    pending: 0,
+    totalHours: 0,
+  })
 
-  // Get therapist
-  const { data: therapist } = await supabase
-    .from('therapists')
-    .select('id, stripe_account_id')
-    .eq('user_id', user.id)
-    .single()
+  useEffect(() => {
+    async function fetchEarnings() {
+      if (!user) return
 
-  // Get all completed/paid bookings
-  const { data: bookings } = await supabase
-    .from('bookings')
-    .select(`
-      *,
-      shift:shifts(
-        title,
-        date,
-        hourly_rate,
-        organizer:organizers(
-          organization_name
+      try {
+        const fetchedBookings = await getBookingsByTherapist(user.uid)
+
+        // Fetch shift details for each booking
+        const bookingsWithShifts = await Promise.all(
+          fetchedBookings.map(async (booking) => {
+            const shift = await getShift(booking.shiftId)
+            return { ...booking, shift }
+          })
         )
-      )
-    `)
-    .eq('therapist_id', therapist?.id)
-    .in('status', ['checked_out', 'completed'])
-    .order('created_at', { ascending: false })
 
-  // Calculate totals
-  const totalEarnings = bookings?.reduce((sum, b) => sum + (b.therapist_payout || 0), 0) || 0
-  const totalHours = bookings?.reduce((sum, b) => sum + (b.hours_worked || 0), 0) || 0
-  const paidEarnings = bookings?.filter(b => b.status === 'completed')
-    .reduce((sum, b) => sum + (b.therapist_payout || 0), 0) || 0
-  const pendingEarnings = bookings?.filter(b => b.status === 'checked_out')
-    .reduce((sum, b) => sum + (b.therapist_payout || 0), 0) || 0
+        // Calculate stats
+        let totalEarnings = 0
+        let paidOut = 0
+        let pending = 0
+        let totalHours = 0
+
+        for (const booking of bookingsWithShifts) {
+          if (booking.status === 'completed') {
+            const payout = booking.therapistPayout || 0
+            const hours = booking.hoursWorked || 0
+
+            totalEarnings += payout
+            totalHours += hours
+
+            // Check if payment has been processed
+            if (booking.paidAt) {
+              paidOut += payout
+            } else {
+              pending += payout
+            }
+          }
+        }
+
+        setStats({
+          totalEarnings,
+          paidOut,
+          pending,
+          totalHours,
+        })
+
+        // Sort by completion date (newest first)
+        const completedBookings = bookingsWithShifts
+          .filter(b => b.status === 'completed')
+          .sort((a, b) => {
+            const dateA = a.updatedAt?.toDate?.() || new Date(0)
+            const dateB = b.updatedAt?.toDate?.() || new Date(0)
+            return dateB.getTime() - dateA.getTime()
+          })
+
+        setBookings(completedBookings)
+      } catch (err) {
+        console.error('Error fetching earnings:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (!authLoading) {
+      fetchEarnings()
+    }
+  }, [user, authLoading])
+
+  if (authLoading || loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary-600" />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -65,7 +120,7 @@ export default async function TherapistEarningsPage() {
               <div>
                 <p className="text-sm font-medium text-gray-500">Total Earnings</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {formatCurrency(totalEarnings)}
+                  {formatCurrency(stats.totalEarnings)}
                 </p>
               </div>
               <div className="h-12 w-12 bg-green-100 rounded-lg flex items-center justify-center">
@@ -81,7 +136,7 @@ export default async function TherapistEarningsPage() {
               <div>
                 <p className="text-sm font-medium text-gray-500">Paid Out</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {formatCurrency(paidEarnings)}
+                  {formatCurrency(stats.paidOut)}
                 </p>
               </div>
               <div className="h-12 w-12 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -97,7 +152,7 @@ export default async function TherapistEarningsPage() {
               <div>
                 <p className="text-sm font-medium text-gray-500">Pending</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {formatCurrency(pendingEarnings)}
+                  {formatCurrency(stats.pending)}
                 </p>
               </div>
               <div className="h-12 w-12 bg-yellow-100 rounded-lg flex items-center justify-center">
@@ -113,7 +168,7 @@ export default async function TherapistEarningsPage() {
               <div>
                 <p className="text-sm font-medium text-gray-500">Total Hours</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {totalHours.toFixed(1)}
+                  {stats.totalHours.toFixed(1)}
                 </p>
               </div>
               <div className="h-12 w-12 bg-purple-100 rounded-lg flex items-center justify-center">
@@ -130,83 +185,75 @@ export default async function TherapistEarningsPage() {
           <CardTitle>Payout Account</CardTitle>
         </CardHeader>
         <CardContent>
-          {therapist?.stripe_account_id ? (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                  <DollarSign className="h-5 w-5 text-purple-600" />
-                </div>
-                <div>
-                  <p className="font-medium text-gray-900">Stripe Connected</p>
-                  <p className="text-sm text-gray-500">Your payouts will be sent to your connected bank account</p>
-                </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 bg-gray-100 rounded-lg flex items-center justify-center">
+                <DollarSign className="h-5 w-5 text-gray-400" />
               </div>
-              <Badge variant="success">Connected</Badge>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                  <DollarSign className="h-5 w-5 text-gray-400" />
-                </div>
-                <div>
-                  <p className="font-medium text-gray-900">No Payout Account</p>
-                  <p className="text-sm text-gray-500">Connect a Stripe account to receive payouts</p>
-                </div>
+              <div>
+                <p className="font-medium text-gray-900">No Payout Account</p>
+                <p className="text-sm text-gray-500">Connect a Stripe account to receive payouts</p>
               </div>
-              <Badge variant="warning">Not Connected</Badge>
             </div>
-          )}
+            <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
+              Not Connected
+            </Badge>
+          </div>
         </CardContent>
       </Card>
 
       {/* Transaction History */}
       <Card>
         <CardHeader>
-          <CardTitle>Transaction History</CardTitle>
+          <CardTitle>Earnings History</CardTitle>
         </CardHeader>
         <CardContent>
-          {bookings && bookings.length > 0 ? (
-            <div className="divide-y">
-              {bookings.map((booking) => (
-                <div key={booking.id} className="py-4 first:pt-0 last:pb-0">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 bg-gray-100 rounded-lg flex items-center justify-center mt-1">
-                        <Building2 className="h-5 w-5 text-gray-500" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-900">{booking.shift?.title}</p>
-                        <p className="text-sm text-gray-500">
-                          {booking.shift?.organizer?.organization_name}
-                        </p>
-                        <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
-                          <span>{formatDate(booking.shift?.date)}</span>
-                          <span>{booking.hours_worked} hours</span>
-                          <span>${booking.shift?.hourly_rate}/hr</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-bold text-green-600">
-                        {formatCurrency(booking.therapist_payout || 0)}
-                      </p>
-                      <Badge
-                        variant={booking.status === 'completed' ? 'success' : 'warning'}
-                        className="mt-1"
-                      >
-                        {booking.status === 'completed' ? 'Paid' : 'Pending'}
-                      </Badge>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
+          {bookings.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               <DollarSign className="h-12 w-12 mx-auto text-gray-400 mb-4" />
               <p>No earnings yet</p>
               <p className="text-sm">Complete shifts to start earning</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {bookings.map((booking) => {
+                const shift = booking.shift
+                const shiftDate = shift?.date?.toDate?.()
+                const formattedDate = shiftDate
+                  ? shiftDate.toLocaleDateString('en-CA', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })
+                  : 'Unknown date'
+
+                return (
+                  <div
+                    key={booking.id}
+                    className="flex items-center justify-between p-4 border border-gray-200 rounded-lg"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 bg-green-100 rounded-lg flex items-center justify-center">
+                        <CheckCircle className="h-5 w-5 text-green-600" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900">{shift?.title || 'Unknown Shift'}</p>
+                        <p className="text-sm text-gray-500">
+                          {formattedDate} · {booking.hoursWorked || 0} hours
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-semibold text-green-600">
+                        +{formatCurrency(booking.therapistPayout || 0)}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        {booking.paidAt ? 'Paid' : 'Pending'}
+                      </p>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
         </CardContent>

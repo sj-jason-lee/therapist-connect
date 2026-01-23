@@ -1,133 +1,98 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useRouter, useParams } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { useParams } from 'next/navigation'
+import { useAuth } from '@/lib/firebase/AuthContext'
+import { getShift, Shift, createApplication, getApplicationsByTherapist } from '@/lib/firebase/firestore'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Modal } from '@/components/ui/modal'
 import {
-  MapPin,
-  Calendar,
-  Clock,
-  DollarSign,
-  Building2,
-  Users,
   ArrowLeft,
-  CheckCircle,
   AlertCircle,
   Loader2,
-  Briefcase,
+  Calendar,
+  Clock,
+  MapPin,
+  DollarSign,
+  Users,
+  CheckCircle,
+  Building,
   FileText,
 } from 'lucide-react'
-import { formatCurrency, formatDate, formatTime } from '@/lib/utils'
 import { EVENT_TYPE_LABELS } from '@/lib/constants'
 
+const STATUS_COLORS: Record<string, string> = {
+  open: 'bg-green-100 text-green-800',
+  filled: 'bg-blue-100 text-blue-800',
+  completed: 'bg-gray-100 text-gray-800',
+  cancelled: 'bg-red-100 text-red-800',
+}
+
 export default function ShiftDetailPage() {
-  const router = useRouter()
   const params = useParams()
   const shiftId = params.id as string
+  const { user, therapist, loading: authLoading } = useAuth()
 
+  const [shift, setShift] = useState<Shift | null>(null)
   const [loading, setLoading] = useState(true)
-  const [shift, setShift] = useState<any>(null)
-  const [therapist, setTherapist] = useState<any>(null)
-  const [existingApplication, setExistingApplication] = useState<any>(null)
-  const [showApplyModal, setShowApplyModal] = useState(false)
-  const [applyMessage, setApplyMessage] = useState('')
-  const [applying, setApplying] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [applying, setApplying] = useState(false)
+  const [applicationMessage, setApplicationMessage] = useState('')
+  const [hasApplied, setHasApplied] = useState(false)
+  const [applicationSuccess, setApplicationSuccess] = useState(false)
 
   useEffect(() => {
-    const loadData = async () => {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+    async function fetchData() {
+      if (!shiftId) return
 
-      if (!user) {
-        router.push('/login')
-        return
+      try {
+        const [fetchedShift, applications] = await Promise.all([
+          getShift(shiftId),
+          user ? getApplicationsByTherapist(user.uid) : Promise.resolve([]),
+        ])
+
+        setShift(fetchedShift)
+
+        // Check if already applied to this shift
+        if (applications.some(app => app.shiftId === shiftId)) {
+          setHasApplied(true)
+        }
+      } catch (err) {
+        console.error('Error fetching shift:', err)
+        setError('Failed to load shift details')
+      } finally {
+        setLoading(false)
       }
-
-      // Get therapist
-      const { data: therapistData } = await supabase
-        .from('therapists')
-        .select('*')
-        .eq('user_id', user.id)
-        .single()
-
-      setTherapist(therapistData)
-
-      // Get shift details
-      const { data: shiftData, error: shiftError } = await supabase
-        .from('shifts')
-        .select(`
-          *,
-          organizer:organizers(
-            organization_name,
-            organization_type,
-            city,
-            province,
-            profile:profiles(full_name, email)
-          )
-        `)
-        .eq('id', shiftId)
-        .single()
-
-      if (shiftError) {
-        console.error('Error fetching shift:', shiftError)
-      }
-
-      setShift(shiftData)
-
-      // Check for existing application
-      if (therapistData) {
-        const { data: applicationData } = await supabase
-          .from('applications')
-          .select('*')
-          .eq('shift_id', shiftId)
-          .eq('therapist_id', therapistData.id)
-          .single()
-
-        setExistingApplication(applicationData)
-      }
-
-      setLoading(false)
     }
 
-    loadData()
-  }, [shiftId, router])
+    if (!authLoading) {
+      fetchData()
+    }
+  }, [shiftId, user, authLoading])
 
   const handleApply = async () => {
-    if (!therapist || !shift) return
+    if (!user || !shiftId) return
 
     setApplying(true)
     setError(null)
 
-    const supabase = createClient()
-
-    const { error: applyError } = await supabase
-      .from('applications')
-      .insert({
-        shift_id: shift.id,
-        therapist_id: therapist.id,
-        message: applyMessage || null,
-        status: 'pending',
-      })
-
-    if (applyError) {
-      setError(applyError.message)
+    try {
+      await createApplication(shiftId, user.uid, applicationMessage || undefined)
+      setHasApplied(true)
+      setApplicationSuccess(true)
+    } catch (err) {
+      console.error('Error applying to shift:', err)
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+      setError(`Failed to submit application: ${errorMessage}`)
+    } finally {
       setApplying(false)
-      return
     }
-
-    setShowApplyModal(false)
-    setExistingApplication({ status: 'pending', message: applyMessage })
-    setApplying(false)
   }
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary-600" />
@@ -137,17 +102,36 @@ export default function ShiftDetailPage() {
 
   if (!shift) {
     return (
-      <div className="text-center py-12">
-        <h2 className="text-xl font-semibold text-gray-900">Shift not found</h2>
-        <Link href="/therapist/shifts" className="text-primary-600 mt-2 inline-block">
+      <div className="max-w-4xl mx-auto space-y-6">
+        <Link
+          href="/therapist/shifts"
+          className="inline-flex items-center text-gray-600 hover:text-gray-900"
+        >
+          <ArrowLeft className="h-4 w-4 mr-1" />
           Back to shifts
         </Link>
+
+        <div className="text-center py-12">
+          <Calendar className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900">Shift not found</h2>
+          <p className="text-gray-500 mt-2">This shift may no longer be available.</p>
+        </div>
       </div>
     )
   }
 
-  const canApply = !existingApplication && therapist?.credentials_verified && shift.status === 'open'
-  const isNotVerified = !therapist?.credentials_verified
+  const shiftDate = shift.date?.toDate?.()
+  const formattedDate = shiftDate
+    ? shiftDate.toLocaleDateString('en-CA', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      })
+    : 'Date TBD'
+
+  const isNotVerified = !therapist?.credentialsVerified
+  const canApply = !isNotVerified && shift.status === 'open' && !hasApplied
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -159,81 +143,27 @@ export default function ShiftDetailPage() {
         Back to shifts
       </Link>
 
-      {/* Shift Header */}
-      <Card>
-        <CardContent className="p-6">
-          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-2xl font-bold text-gray-900">{shift.title}</h1>
-                <Badge variant="info">
-                  {EVENT_TYPE_LABELS[shift.event_type as keyof typeof EVENT_TYPE_LABELS]}
-                </Badge>
-                {shift.sport && <Badge variant="default">{shift.sport}</Badge>}
-              </div>
-              <div className="flex items-center gap-1 mt-2 text-gray-600">
-                <Building2 className="h-4 w-4" />
-                <span>
-                  {shift.organizer?.organization_name || shift.organizer?.profile?.full_name}
-                </span>
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="flex items-center gap-1 text-2xl font-bold text-primary-600">
-                <DollarSign className="h-6 w-6" />
-                {shift.hourly_rate}/hr
-              </div>
-              <span className="text-sm text-gray-500">CAD</span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
 
-      {/* Application Status */}
-      {existingApplication && (
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-3">
-              {existingApplication.status === 'pending' && (
-                <>
-                  <Clock className="h-6 w-6 text-yellow-600" />
-                  <div>
-                    <h3 className="font-medium text-gray-900">Application Pending</h3>
-                    <p className="text-sm text-gray-600">
-                      Your application is being reviewed by the organizer.
-                    </p>
-                  </div>
-                </>
-              )}
-              {existingApplication.status === 'accepted' && (
-                <>
-                  <CheckCircle className="h-6 w-6 text-green-600" />
-                  <div>
-                    <h3 className="font-medium text-gray-900">Application Accepted</h3>
-                    <p className="text-sm text-gray-600">
-                      Congratulations! Check your bookings for details.
-                    </p>
-                  </div>
-                </>
-              )}
-              {existingApplication.status === 'rejected' && (
-                <>
-                  <AlertCircle className="h-6 w-6 text-red-600" />
-                  <div>
-                    <h3 className="font-medium text-gray-900">Application Not Selected</h3>
-                    <p className="text-sm text-gray-600">
-                      The organizer has chosen another therapist for this shift.
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+      {applicationSuccess && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
+          <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <h3 className="font-medium text-green-800">Application Submitted!</h3>
+            <p className="text-sm text-green-700">
+              Your application has been sent to the organizer. You&apos;ll be notified when they respond.
+            </p>
+          </div>
+        </div>
       )}
 
       {/* Not Verified Warning */}
-      {isNotVerified && !existingApplication && (
+      {isNotVerified && (
         <Card className="border-yellow-200 bg-yellow-50">
           <CardContent className="p-6">
             <div className="flex items-center gap-3">
@@ -252,166 +182,131 @@ export default function ShiftDetailPage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main Details */}
-        <div className="lg:col-span-2 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Shift Details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex items-center gap-3">
-                  <Calendar className="h-5 w-5 text-gray-400" />
-                  <div>
-                    <p className="text-sm text-gray-500">Date</p>
-                    <p className="font-medium">{formatDate(shift.date)}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Clock className="h-5 w-5 text-gray-400" />
-                  <div>
-                    <p className="text-sm text-gray-500">Time</p>
-                    <p className="font-medium">
-                      {formatTime(shift.start_time)} - {formatTime(shift.end_time)}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <MapPin className="h-5 w-5 text-gray-400" />
-                  <div>
-                    <p className="text-sm text-gray-500">Location</p>
-                    <p className="font-medium">{shift.venue_name || 'TBD'}</p>
-                    <p className="text-sm text-gray-600">
-                      {shift.address && `${shift.address}, `}
-                      {shift.city}, {shift.province}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Users className="h-5 w-5 text-gray-400" />
-                  <div>
-                    <p className="text-sm text-gray-500">Therapists Needed</p>
-                    <p className="font-medium">{shift.therapists_needed}</p>
-                  </div>
-                </div>
+      {/* Shift Details */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between">
+            <div className="space-y-1">
+              <CardTitle className="text-2xl">{shift.title}</CardTitle>
+              <div className="flex items-center gap-2">
+                <Badge className={STATUS_COLORS[shift.status] || STATUS_COLORS.open}>
+                  {shift.status.charAt(0).toUpperCase() + shift.status.slice(1)}
+                </Badge>
+                {shift.eventType && (
+                  <Badge variant="outline">
+                    {EVENT_TYPE_LABELS[shift.eventType] || shift.eventType}
+                  </Badge>
+                )}
+                {shift.sport && <Badge variant="secondary">{shift.sport}</Badge>}
               </div>
-            </CardContent>
-          </Card>
+            </div>
+            <div className="text-right">
+              <p className="text-2xl font-bold text-green-600">${shift.hourlyRate}/hr</p>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="flex items-center gap-3 text-gray-600">
+              <Calendar className="h-5 w-5 text-gray-400" />
+              <span>{formattedDate}</span>
+            </div>
+            <div className="flex items-center gap-3 text-gray-600">
+              <Clock className="h-5 w-5 text-gray-400" />
+              <span>{shift.startTime} - {shift.endTime}</span>
+            </div>
+            <div className="flex items-center gap-3 text-gray-600">
+              <MapPin className="h-5 w-5 text-gray-400" />
+              <span>
+                {shift.venueName && `${shift.venueName}, `}
+                {shift.address && `${shift.address}, `}
+                {shift.city}, {shift.province}
+                {shift.postalCode && ` ${shift.postalCode}`}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-gray-600">
+              <Users className="h-5 w-5 text-gray-400" />
+              <span>{shift.therapistsNeeded} therapist{shift.therapistsNeeded !== 1 ? 's' : ''} needed</span>
+            </div>
+          </div>
 
           {shift.description && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Description</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-gray-700 whitespace-pre-wrap">{shift.description}</p>
-              </CardContent>
-            </Card>
-          )}
-
-          {(shift.equipment_provided || shift.special_requirements) && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Additional Information</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {shift.equipment_provided && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <Briefcase className="h-4 w-4 text-gray-400" />
-                      <span className="font-medium text-gray-700">Equipment Provided</span>
-                    </div>
-                    <p className="text-gray-600 ml-6">{shift.equipment_provided}</p>
-                  </div>
-                )}
-                {shift.special_requirements && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <FileText className="h-4 w-4 text-gray-400" />
-                      <span className="font-medium text-gray-700">Special Requirements</span>
-                    </div>
-                    <p className="text-gray-600 ml-6">{shift.special_requirements}</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-
-        {/* Sidebar */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Apply for this Shift</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {canApply ? (
-                <Button className="w-full" onClick={() => setShowApplyModal(true)}>
-                  Apply Now
-                </Button>
-              ) : existingApplication ? (
-                <p className="text-gray-600 text-sm">You have already applied to this shift.</p>
-              ) : isNotVerified ? (
-                <Link href="/therapist/credentials">
-                  <Button className="w-full" variant="outline">
-                    Verify Credentials
-                  </Button>
-                </Link>
-              ) : (
-                <p className="text-gray-600 text-sm">This shift is no longer accepting applications.</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Organizer</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="font-medium text-gray-900">
-                {shift.organizer?.organization_name || shift.organizer?.profile?.full_name}
-              </p>
-              <p className="text-sm text-gray-600">
-                {shift.organizer?.city}, {shift.organizer?.province}
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Apply Modal */}
-      <Modal
-        isOpen={showApplyModal}
-        onClose={() => setShowApplyModal(false)}
-        title="Apply for Shift"
-        description="Add a message to introduce yourself to the organizer."
-      >
-        <div className="space-y-4">
-          <Textarea
-            label="Cover Message (Optional)"
-            value={applyMessage}
-            onChange={(e) => setApplyMessage(e.target.value)}
-            placeholder="Tell the organizer why you're a great fit for this shift..."
-            rows={4}
-          />
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-600">
-              {error}
+            <div className="pt-4 border-t">
+              <h3 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                <FileText className="h-4 w-4" />
+                Description
+              </h3>
+              <p className="text-gray-600 whitespace-pre-wrap">{shift.description}</p>
             </div>
           )}
 
-          <div className="flex gap-3 justify-end">
-            <Button variant="outline" onClick={() => setShowApplyModal(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleApply} loading={applying}>
-              Submit Application
-            </Button>
-          </div>
-        </div>
-      </Modal>
+          {shift.equipmentProvided && (
+            <div className="pt-4 border-t">
+              <h3 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                <Building className="h-4 w-4" />
+                Equipment Provided
+              </h3>
+              <p className="text-gray-600">{shift.equipmentProvided}</p>
+            </div>
+          )}
+
+          {shift.specialRequirements && (
+            <div className="pt-4 border-t">
+              <h3 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                <AlertCircle className="h-4 w-4" />
+                Special Requirements
+              </h3>
+              <p className="text-gray-600">{shift.specialRequirements}</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Application Section */}
+      {shift.status === 'open' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Apply for this Shift</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {hasApplied ? (
+              <div className="flex items-center gap-3 text-green-700 bg-green-50 p-4 rounded-lg">
+                <CheckCircle className="h-5 w-5" />
+                <span>You have already applied to this shift. The organizer will review your application.</span>
+              </div>
+            ) : isNotVerified ? (
+              <div className="flex items-center gap-3 text-yellow-700 bg-yellow-50 p-4 rounded-lg">
+                <AlertCircle className="h-5 w-5" />
+                <span>You must have verified credentials to apply.</span>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Message to Organizer (optional)
+                  </label>
+                  <Textarea
+                    placeholder="Introduce yourself and explain why you're a good fit for this shift..."
+                    rows={4}
+                    value={applicationMessage}
+                    onChange={(e) => setApplicationMessage(e.target.value)}
+                  />
+                </div>
+                <Button onClick={handleApply} disabled={applying} className="w-full">
+                  {applying ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Submitting...
+                    </>
+                  ) : (
+                    'Submit Application'
+                  )}
+                </Button>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

@@ -1,70 +1,76 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useAuth } from '@/lib/firebase/AuthContext'
+import { getShiftsByOrganizer, Shift } from '@/lib/firebase/firestore'
 import Link from 'next/link'
 import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import {
   PlusCircle,
-  MapPin,
   Calendar,
+  Loader2,
+  MapPin,
   Clock,
   DollarSign,
   Users,
-  Eye,
 } from 'lucide-react'
-import { formatDate, formatTime } from '@/lib/utils'
-import { EVENT_TYPE_LABELS, SHIFT_STATUS } from '@/lib/constants'
+import { EVENT_TYPE_LABELS } from '@/lib/constants'
 
-export default async function OrganizerShiftsPage() {
-  const supabase = createClient()
+const STATUS_COLORS: Record<string, string> = {
+  open: 'bg-green-100 text-green-800',
+  filled: 'bg-blue-100 text-blue-800',
+  completed: 'bg-gray-100 text-gray-800',
+  cancelled: 'bg-red-100 text-red-800',
+}
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+export default function OrganizerShiftsPage() {
+  const { user, loading: authLoading } = useAuth()
+  const [shifts, setShifts] = useState<Shift[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  // Get organizer
-  const { data: organizer } = await supabase
-    .from('organizers')
-    .select('id')
-    .eq('user_id', user.id)
-    .single()
+  useEffect(() => {
+    async function fetchShifts() {
+      if (!user) return
 
-  // Get all shifts for this organizer
-  const { data: shifts } = await supabase
-    .from('shifts')
-    .select('*')
-    .eq('organizer_id', organizer?.id)
-    .order('date', { ascending: false })
+      try {
+        const fetchedShifts = await getShiftsByOrganizer(user.uid)
+        // Sort by date descending (newest first)
+        fetchedShifts.sort((a, b) => {
+          const dateA = a.date?.toDate?.() || new Date(0)
+          const dateB = b.date?.toDate?.() || new Date(0)
+          return dateB.getTime() - dateA.getTime()
+        })
+        setShifts(fetchedShifts)
+      } catch (err) {
+        console.error('Error fetching shifts:', err)
+        setError('Failed to load shifts')
+      } finally {
+        setLoading(false)
+      }
+    }
 
-  // Get application counts for each shift
-  const shiftIds = shifts?.map(s => s.id) || []
-  let applicationCounts: Record<string, number> = {}
+    if (!authLoading) {
+      fetchShifts()
+    }
+  }, [user, authLoading])
 
-  if (shiftIds.length > 0) {
-    const { data: applications } = await supabase
-      .from('applications')
-      .select('shift_id')
-      .in('shift_id', shiftIds)
-      .eq('status', 'pending')
-
-    applications?.forEach(app => {
-      applicationCounts[app.shift_id] = (applicationCounts[app.shift_id] || 0) + 1
-    })
+  if (authLoading || loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary-600" />
+      </div>
+    )
   }
 
-  const getStatusVariant = (status: string) => {
-    switch (status) {
-      case 'open':
-        return 'info'
-      case 'filled':
-        return 'success'
-      case 'completed':
-        return 'default'
-      case 'cancelled':
-        return 'error'
-      default:
-        return 'default'
-    }
+  if (error) {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+        <p className="text-sm text-red-700">{error}</p>
+      </div>
+    )
   }
 
   return (
@@ -82,79 +88,7 @@ export default async function OrganizerShiftsPage() {
         </Link>
       </div>
 
-      {/* Shifts List */}
-      {shifts && shifts.length > 0 ? (
-        <div className="grid gap-4">
-          {shifts.map((shift) => {
-            const pendingCount = applicationCounts[shift.id] || 0
-
-            return (
-              <Card key={shift.id} className="hover:shadow-md transition-shadow">
-                <CardContent className="p-6">
-                  <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="text-lg font-semibold text-gray-900">
-                          {shift.title}
-                        </h3>
-                        <Badge variant={getStatusVariant(shift.status)}>
-                          {shift.status}
-                        </Badge>
-                        <Badge variant="info">
-                          {EVENT_TYPE_LABELS[shift.event_type as keyof typeof EVENT_TYPE_LABELS]}
-                        </Badge>
-                        {pendingCount > 0 && (
-                          <Badge variant="warning">
-                            {pendingCount} pending application{pendingCount > 1 ? 's' : ''}
-                          </Badge>
-                        )}
-                      </div>
-
-                      <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
-                        <div className="flex items-center gap-2 text-gray-600">
-                          <Calendar className="h-4 w-4" />
-                          <span className="text-sm">{formatDate(shift.date)}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-gray-600">
-                          <Clock className="h-4 w-4" />
-                          <span className="text-sm">
-                            {formatTime(shift.start_time)} - {formatTime(shift.end_time)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 text-gray-600">
-                          <MapPin className="h-4 w-4" />
-                          <span className="text-sm">
-                            {shift.city}, {shift.province}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 text-gray-600">
-                          <DollarSign className="h-4 w-4" />
-                          <span className="text-sm">${shift.hourly_rate}/hr</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      <div className="text-right mr-4">
-                        <div className="flex items-center gap-1 text-gray-600">
-                          <Users className="h-4 w-4" />
-                          <span className="text-sm">{shift.therapists_needed} needed</span>
-                        </div>
-                      </div>
-                      <Link href={`/organizer/shifts/${shift.id}`}>
-                        <Button variant="outline" size="sm">
-                          <Eye className="h-4 w-4 mr-2" />
-                          View
-                        </Button>
-                      </Link>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-      ) : (
+      {shifts.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <Calendar className="h-12 w-12 mx-auto text-gray-400 mb-4" />
@@ -170,6 +104,72 @@ export default async function OrganizerShiftsPage() {
             </Link>
           </CardContent>
         </Card>
+      ) : (
+        <div className="space-y-4">
+          {shifts.map((shift) => {
+            const shiftDate = shift.date?.toDate?.()
+            const formattedDate = shiftDate
+              ? shiftDate.toLocaleDateString('en-CA', {
+                  weekday: 'short',
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric',
+                })
+              : 'Date TBD'
+
+            return (
+              <Link key={shift.id} href={`/organizer/shifts/${shift.id}`}>
+                <Card className="hover:shadow-md transition-shadow cursor-pointer">
+                  <CardContent className="p-6">
+                    <div className="flex items-start justify-between">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-lg font-semibold text-gray-900">
+                            {shift.title}
+                          </h3>
+                          <Badge className={STATUS_COLORS[shift.status] || STATUS_COLORS.open}>
+                            {shift.status.charAt(0).toUpperCase() + shift.status.slice(1)}
+                          </Badge>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
+                          <span className="flex items-center gap-1">
+                            <Calendar className="h-4 w-4" />
+                            {formattedDate}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-4 w-4" />
+                            {shift.startTime} - {shift.endTime}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <MapPin className="h-4 w-4" />
+                            {shift.city}, {shift.province}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
+                          <span className="flex items-center gap-1">
+                            <DollarSign className="h-4 w-4" />
+                            ${shift.hourlyRate}/hr
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Users className="h-4 w-4" />
+                            {shift.therapistsNeeded} therapist{shift.therapistsNeeded !== 1 ? 's' : ''} needed
+                          </span>
+                          {shift.eventType && (
+                            <Badge variant="outline">
+                              {EVENT_TYPE_LABELS[shift.eventType] || shift.eventType}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            )
+          })}
+        </div>
       )}
     </div>
   )

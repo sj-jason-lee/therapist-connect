@@ -1,8 +1,19 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
+import { getStorage } from '@/lib/firebase/config'
+import { useAuth } from '@/lib/firebase/AuthContext'
+import {
+  getTherapistProfile,
+  createTherapistProfile,
+  updateTherapistProfile,
+  markTherapistOnboardingComplete,
+  markOnboardingComplete,
+  createCredentialDocument,
+  getCredentialDocuments,
+} from '@/lib/firebase/firestore'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,7 +27,6 @@ import {
   ChevronRight,
   ChevronLeft,
   Upload,
-  X,
   AlertCircle,
 } from 'lucide-react'
 import { CANADIAN_PROVINCES, DOCUMENT_TYPE_LABELS, DOCUMENT_TYPES } from '@/lib/constants'
@@ -24,13 +34,11 @@ import { CANADIAN_PROVINCES, DOCUMENT_TYPE_LABELS, DOCUMENT_TYPES } from '@/lib/
 type Step = 'basic' | 'professional' | 'documents' | 'review'
 
 interface FormData {
-  // Basic Info
   full_name: string
   phone: string
   city: string
   province: string
   postal_code: string
-  // Professional Details
   cata_number: string
   cata_expiry: string
   insurance_provider: string
@@ -57,10 +65,11 @@ const STEPS: { id: Step; title: string; icon: React.ReactNode }[] = [
 
 export default function TherapistOnboardingPage() {
   const router = useRouter()
+  const { user, profile, loading: authLoading } = useAuth()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [currentStep, setCurrentStep] = useState<Step>('basic')
-  const [therapistId, setTherapistId] = useState<string | null>(null)
+  const [hasExistingProfile, setHasExistingProfile] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null)
   const [uploadedDocs, setUploadedDocs] = useState<UploadedDocument[]>([])
@@ -83,77 +92,64 @@ export default function TherapistOnboardingPage() {
   })
 
   useEffect(() => {
-    loadExistingData()
-  }, [])
-
-  const loadExistingData = async () => {
-    const supabase = createClient()
-
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      router.push('/login')
-      return
-    }
-
-    // Get profile data
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('full_name, phone')
-      .eq('id', user.id)
-      .single()
-
-    // Get therapist data
-    const { data: therapist } = await supabase
-      .from('therapists')
-      .select('*')
-      .eq('user_id', user.id)
-      .single()
-
-    if (therapist) {
-      setTherapistId(therapist.id)
-
-      // Check if already completed onboarding
-      if (therapist.onboarding_completed) {
-        router.push('/therapist')
+    if (!authLoading) {
+      if (!user) {
+        router.push('/login')
         return
       }
+      loadExistingData()
+    }
+  }, [user, authLoading])
 
-      setFormData({
-        full_name: profile?.full_name || '',
-        phone: profile?.phone || '',
-        city: therapist.city || '',
-        province: therapist.province || '',
-        postal_code: therapist.postal_code || '',
-        cata_number: therapist.cata_number || '',
-        cata_expiry: therapist.cata_expiry || '',
-        insurance_provider: therapist.insurance_provider || '',
-        insurance_policy_number: therapist.insurance_policy_number || '',
-        insurance_expiry: therapist.insurance_expiry || '',
-        bls_expiry: therapist.bls_expiry || '',
-        hourly_rate_min: therapist.hourly_rate_min || 50,
-        hourly_rate_max: therapist.hourly_rate_max || 75,
-        travel_radius_km: therapist.travel_radius_km || 50,
-      })
+  const loadExistingData = async () => {
+    if (!user) return
 
-      // Load existing documents
-      const { data: credentials } = await supabase
-        .from('credential_documents')
-        .select('document_type, file_url')
-        .eq('therapist_id', therapist.id)
+    try {
+      const therapist = await getTherapistProfile(user.uid)
 
-      if (credentials) {
-        setUploadedDocs(credentials.map(c => ({
-          type: c.document_type,
-          url: c.file_url,
-          name: c.document_type,
-        })))
+      if (therapist) {
+        setHasExistingProfile(true)
+
+        if (therapist.onboardingComplete) {
+          router.push('/therapist')
+          return
+        }
+
+        setFormData({
+          full_name: profile?.fullName || '',
+          phone: profile?.phone || '',
+          city: therapist.city || '',
+          province: therapist.province || '',
+          postal_code: therapist.postalCode || '',
+          cata_number: therapist.cataNumber || '',
+          cata_expiry: therapist.cataExpiry ? new Date(therapist.cataExpiry.toDate()).toISOString().split('T')[0] : '',
+          insurance_provider: therapist.insuranceProvider || '',
+          insurance_policy_number: therapist.insurancePolicyNumber || '',
+          insurance_expiry: therapist.insuranceExpiry ? new Date(therapist.insuranceExpiry.toDate()).toISOString().split('T')[0] : '',
+          bls_expiry: therapist.blsExpiry ? new Date(therapist.blsExpiry.toDate()).toISOString().split('T')[0] : '',
+          hourly_rate_min: therapist.hourlyRateMin || 50,
+          hourly_rate_max: therapist.hourlyRateMax || 75,
+          travel_radius_km: therapist.travelRadiusKm || 50,
+        })
+
+        // Load existing documents
+        const credentials = await getCredentialDocuments(user.uid)
+        if (credentials.length > 0) {
+          setUploadedDocs(credentials.map(c => ({
+            type: c.documentType,
+            url: c.fileUrl,
+            name: c.documentType,
+          })))
+        }
+      } else {
+        setFormData(prev => ({
+          ...prev,
+          full_name: profile?.fullName || '',
+          phone: profile?.phone || '',
+        }))
       }
-    } else {
-      setFormData(prev => ({
-        ...prev,
-        full_name: profile?.full_name || '',
-        phone: profile?.phone || '',
-      }))
+    } catch (error) {
+      console.error('Error loading data:', error)
     }
 
     setLoading(false)
@@ -238,40 +234,32 @@ export default function TherapistOnboardingPage() {
   }
 
   const saveProgress = async () => {
-    setSaving(true)
-    const supabase = createClient()
-
-    const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    // Update profile
-    await supabase
-      .from('profiles')
-      .update({
-        full_name: formData.full_name,
-        phone: formData.phone,
-      })
-      .eq('id', user.id)
+    setSaving(true)
 
-    // Update therapist
-    if (therapistId) {
-      await supabase
-        .from('therapists')
-        .update({
-          city: formData.city,
-          province: formData.province,
-          postal_code: formData.postal_code,
-          cata_number: formData.cata_number,
-          cata_expiry: formData.cata_expiry || null,
-          insurance_provider: formData.insurance_provider,
-          insurance_policy_number: formData.insurance_policy_number,
-          insurance_expiry: formData.insurance_expiry || null,
-          bls_expiry: formData.bls_expiry || null,
-          hourly_rate_min: formData.hourly_rate_min,
-          hourly_rate_max: formData.hourly_rate_max,
-          travel_radius_km: formData.travel_radius_km,
-        })
-        .eq('id', therapistId)
+    try {
+      const therapistData = {
+        city: formData.city,
+        province: formData.province,
+        postalCode: formData.postal_code,
+        cataNumber: formData.cata_number,
+        insuranceProvider: formData.insurance_provider,
+        insurancePolicyNumber: formData.insurance_policy_number,
+        hourlyRateMin: formData.hourly_rate_min,
+        hourlyRateMax: formData.hourly_rate_max,
+        travelRadiusKm: formData.travel_radius_km,
+      }
+
+      if (hasExistingProfile) {
+        await updateTherapistProfile(user.uid, therapistData)
+      } else {
+        await createTherapistProfile(user.uid, therapistData)
+        setHasExistingProfile(true)
+      }
+    } catch (error) {
+      console.error('Error saving progress:', error)
+      setError('Failed to save progress')
     }
 
     setSaving(false)
@@ -296,82 +284,59 @@ export default function TherapistOnboardingPage() {
   }
 
   const handleFileUpload = async (docType: string, file: File) => {
-    if (!therapistId) return
+    if (!user) return
 
     setUploadingDoc(docType)
     setError(null)
 
-    const supabase = createClient()
+    try {
+      // Upload file to Firebase Storage
+      const fileExt = file.name.split('.').pop()
+      const fileName = `credentials/${user.uid}/${docType}_${Date.now()}.${fileExt}`
+      const storageRef = ref(getStorage(), fileName)
 
-    // Upload file
-    const fileExt = file.name.split('.').pop()
-    const fileName = `${therapistId}/${docType}_${Date.now()}.${fileExt}`
+      await uploadBytes(storageRef, file)
+      const downloadUrl = await getDownloadURL(storageRef)
 
-    const { error: uploadError } = await supabase.storage
-      .from('credentials')
-      .upload(fileName, file)
-
-    if (uploadError) {
-      setError('Failed to upload file: ' + uploadError.message)
-      setUploadingDoc(null)
-      return
-    }
-
-    // Get public URL
-    const { data: { publicUrl } } = supabase.storage
-      .from('credentials')
-      .getPublicUrl(fileName)
-
-    // Delete existing credential of same type
-    await supabase
-      .from('credential_documents')
-      .delete()
-      .eq('therapist_id', therapistId)
-      .eq('document_type', docType)
-
-    // Save credential record
-    const { error: dbError } = await supabase
-      .from('credential_documents')
-      .insert({
-        therapist_id: therapistId,
-        document_type: docType,
-        file_url: publicUrl,
+      // Save credential record to Firestore
+      await createCredentialDocument(user.uid, {
+        documentType: docType as 'cata_card' | 'insurance_certificate' | 'bls_certificate' | 'profile_photo',
+        fileUrl: downloadUrl,
       })
 
-    if (dbError) {
-      setError('Failed to save credential: ' + dbError.message)
-      setUploadingDoc(null)
-      return
+      // Update local state
+      setUploadedDocs(prev => {
+        const filtered = prev.filter(d => d.type !== docType)
+        return [...filtered, { type: docType, url: downloadUrl, name: file.name }]
+      })
+    } catch (error) {
+      console.error('Upload error:', error)
+      setError('Failed to upload file')
     }
-
-    // Update local state
-    setUploadedDocs(prev => {
-      const filtered = prev.filter(d => d.type !== docType)
-      return [...filtered, { type: docType, url: publicUrl, name: file.name }]
-    })
 
     setUploadingDoc(null)
   }
 
   const handleComplete = async () => {
     if (!validateStep('documents')) return
+    if (!user) return
 
     setSaving(true)
-    const supabase = createClient()
 
-    if (therapistId) {
-      await supabase
-        .from('therapists')
-        .update({ onboarding_completed: true })
-        .eq('id', therapistId)
+    try {
+      await markTherapistOnboardingComplete(user.uid)
+      await markOnboardingComplete(user.uid)
+      router.push('/therapist')
+    } catch (error) {
+      console.error('Error completing onboarding:', error)
+      setError('Failed to complete setup')
+      setSaving(false)
     }
-
-    router.push('/therapist')
   }
 
   const currentStepIndex = STEPS.findIndex(s => s.id === currentStep)
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary-600" />

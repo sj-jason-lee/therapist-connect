@@ -1,137 +1,94 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { useEffect, useState } from 'react'
+import { useAuth } from '@/lib/firebase/AuthContext'
 import {
-  MapPin,
+  getBookingsByTherapist,
+  getShift,
+  Booking,
+  Shift,
+} from '@/lib/firebase/firestore'
+import Link from 'next/link'
+import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import {
   Calendar,
-  Clock,
-  DollarSign,
-  Building2,
-  CheckCircle,
-  LogIn,
-  LogOut,
   Loader2,
+  Clock,
+  MapPin,
+  DollarSign,
+  AlertCircle,
+  CheckCircle,
+  Building,
 } from 'lucide-react'
-import { formatDate, formatTime, formatCurrency } from '@/lib/utils'
+import { EVENT_TYPE_LABELS } from '@/lib/constants'
+
+const BOOKING_STATUS_COLORS: Record<string, string> = {
+  confirmed: 'bg-blue-100 text-blue-800',
+  checked_in: 'bg-yellow-100 text-yellow-800',
+  checked_out: 'bg-purple-100 text-purple-800',
+  completed: 'bg-green-100 text-green-800',
+  cancelled: 'bg-red-100 text-red-800',
+  disputed: 'bg-orange-100 text-orange-800',
+}
+
+const BOOKING_STATUS_LABELS: Record<string, string> = {
+  confirmed: 'Confirmed',
+  checked_in: 'Checked In',
+  checked_out: 'Checked Out',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  disputed: 'Disputed',
+}
+
+interface BookingWithShift extends Booking {
+  shift?: Shift | null
+}
 
 export default function TherapistBookingsPage() {
-  const router = useRouter()
+  const { user, loading: authLoading } = useAuth()
+  const [bookings, setBookings] = useState<BookingWithShift[]>([])
   const [loading, setLoading] = useState(true)
-  const [bookings, setBookings] = useState<any[]>([])
-  const [processingId, setProcessingId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    loadBookings()
-  }, [])
+    async function fetchBookings() {
+      if (!user) return
 
-  const loadBookings = async () => {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+      try {
+        const fetchedBookings = await getBookingsByTherapist(user.uid)
 
-    if (!user) {
-      router.push('/login')
-      return
-    }
-
-    // Get therapist
-    const { data: therapist, error: therapistError } = await supabase
-      .from('therapists')
-      .select('id')
-      .eq('user_id', user.id)
-      .single()
-
-    // If no therapist profile, redirect to complete profile
-    if (!therapist || therapistError) {
-      router.push('/therapist/profile')
-      return
-    }
-
-    // Get bookings with shift details
-    const { data: bookingsData, error: bookingsError } = await supabase
-      .from('bookings')
-      .select(`
-        *,
-        shift:shifts(
-          *,
-          organizer:organizers(
-            organization_name,
-            profile:profiles(full_name, phone)
-          )
+        // Fetch shift details for each booking
+        const bookingsWithShifts = await Promise.all(
+          fetchedBookings.map(async (booking) => {
+            const shift = await getShift(booking.shiftId)
+            return { ...booking, shift }
+          })
         )
-      `)
-      .eq('therapist_id', therapist.id)
-      .order('created_at', { ascending: false })
 
-    if (bookingsError) {
-      console.error('Error loading bookings:', bookingsError)
-    }
-    console.log('Bookings loaded:', bookingsData)
+        // Sort by shift date (upcoming first)
+        bookingsWithShifts.sort((a, b) => {
+          const dateA = a.shift?.date?.toDate?.() || new Date(0)
+          const dateB = b.shift?.date?.toDate?.() || new Date(0)
+          return dateA.getTime() - dateB.getTime()
+        })
 
-    setBookings(bookingsData || [])
-    setLoading(false)
-  }
-
-  const handleCheckIn = async (bookingId: string) => {
-    setProcessingId(bookingId)
-    const supabase = createClient()
-
-    const { error } = await supabase
-      .from('bookings')
-      .update({
-        status: 'checked_in',
-        check_in_time: new Date().toISOString(),
-      })
-      .eq('id', bookingId)
-
-    if (error) {
-      console.error('Check-in error:', error)
+        setBookings(bookingsWithShifts)
+      } catch (err) {
+        console.error('Error fetching bookings:', err)
+        setError('Failed to load bookings')
+      } finally {
+        setLoading(false)
+      }
     }
 
-    setProcessingId(null)
-    loadBookings()
-  }
-
-  const handleCheckOut = async (bookingId: string, shift: any, checkInTime: string) => {
-    setProcessingId(bookingId)
-    const supabase = createClient()
-
-    const checkOut = new Date()
-    const checkIn = new Date(checkInTime)
-    const hoursWorked = (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60)
-    const roundedHours = Math.max(0.5, Math.round(hoursWorked * 4) / 4) // Round to nearest 15 min, minimum 0.5 hours
-
-    // Go4-style pricing: therapist gets 100% of rate, organizer pays rate + 20% fee
-    const therapistPayout = roundedHours * shift.hourly_rate // Therapist gets full rate
-    const platformFee = therapistPayout * 0.20 // 20% service fee charged to organizer
-    const amountDue = therapistPayout + platformFee // Total organizer pays
-
-    const { error } = await supabase
-      .from('bookings')
-      .update({
-        status: 'checked_out',
-        check_out_time: checkOut.toISOString(),
-        hours_worked: roundedHours,
-        amount_due: amountDue,
-        platform_fee: platformFee,
-        therapist_payout: therapistPayout,
-      })
-      .eq('id', bookingId)
-
-    if (error) {
-      console.error('Check-out error:', error)
+    if (!authLoading) {
+      fetchBookings()
     }
+  }, [user, authLoading])
 
-    setProcessingId(null)
-    loadBookings()
-  }
-
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary-600" />
@@ -139,218 +96,60 @@ export default function TherapistBookingsPage() {
     )
   }
 
-  const getStatusVariant = (status: string) => {
-    switch (status) {
-      case 'confirmed': return 'info'
-      case 'checked_in': return 'warning'
-      case 'checked_out': return 'success'
-      case 'completed': return 'success'
-      case 'cancelled': return 'error'
-      default: return 'default'
-    }
-  }
-
-  const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'confirmed': return 'Upcoming'
-      case 'checked_in': return 'In Progress'
-      case 'checked_out': return 'Awaiting Payment'
-      case 'completed': return 'Completed'
-      case 'cancelled': return 'Cancelled'
-      default: return status
-    }
-  }
-
-  const upcomingBookings = bookings.filter(b => b.status === 'confirmed')
-  const activeBookings = bookings.filter(b => b.status === 'checked_in')
-  const completedBookings = bookings.filter(b => ['checked_out', 'completed'].includes(b.status))
+  const now = new Date()
+  const upcomingBookings = bookings.filter(b => {
+    const shiftDate = b.shift?.date?.toDate?.()
+    return shiftDate && shiftDate >= now && b.status === 'confirmed'
+  })
+  const activeBookings = bookings.filter(b =>
+    b.status === 'checked_in' || b.status === 'checked_out'
+  )
+  const completedBookings = bookings.filter(b => b.status === 'completed')
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">My Bookings</h1>
-        <p className="text-gray-500 mt-1">Manage your confirmed shifts and check in/out.</p>
+        <p className="text-gray-500 mt-1">Manage your confirmed shifts.</p>
       </div>
 
-      {/* Active Bookings - Check-in/out needed */}
-      {activeBookings.length > 0 && (
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Clock className="h-5 w-5 text-yellow-600" />
-            Currently Working ({activeBookings.length})
-          </h2>
-          <div className="space-y-4">
-            {activeBookings.map((booking) => (
-              <Card key={booking.id} className="border-yellow-200 bg-yellow-50">
-                <CardContent className="p-6">
-                  <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-lg font-semibold text-gray-900">
-                          {booking.shift?.title}
-                        </h3>
-                        <Badge variant="warning">In Progress</Badge>
-                      </div>
-                      <div className="flex items-center gap-1 mt-1 text-gray-600">
-                        <Building2 className="h-4 w-4" />
-                        <span className="text-sm">
-                          {booking.shift?.organizer?.organization_name}
-                        </span>
-                      </div>
-                      <div className="mt-2 text-sm text-gray-600">
-                        Checked in: {new Date(booking.check_in_time).toLocaleTimeString()}
-                      </div>
-                    </div>
-                    <Button
-                      onClick={() => handleCheckOut(booking.id, booking.shift, booking.check_in_time)}
-                      disabled={processingId === booking.id}
-                      variant="secondary"
-                    >
-                      {processingId === booking.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      ) : (
-                        <LogOut className="h-4 w-4 mr-2" />
-                      )}
-                      Check Out
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700">{error}</p>
         </div>
       )}
 
-      {/* Upcoming Bookings */}
-      {upcomingBookings.length > 0 && (
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Calendar className="h-5 w-5 text-blue-600" />
-            Upcoming ({upcomingBookings.length})
-          </h2>
-          <div className="space-y-4">
-            {upcomingBookings.map((booking) => {
-              const shiftDate = new Date(booking.shift?.date)
-              const today = new Date()
-              today.setHours(0, 0, 0, 0)
-              const isToday = shiftDate.toDateString() === today.toDateString()
+      {/* Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-blue-600">{upcomingBookings.length}</p>
+              <p className="text-sm text-gray-500">Upcoming</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-yellow-600">{activeBookings.length}</p>
+              <p className="text-sm text-gray-500">In Progress</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-green-600">{completedBookings.length}</p>
+              <p className="text-sm text-gray-500">Completed</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
-              return (
-                <Card key={booking.id}>
-                  <CardContent className="p-6">
-                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="text-lg font-semibold text-gray-900">
-                            {booking.shift?.title}
-                          </h3>
-                          <Badge variant="info">Confirmed</Badge>
-                          {isToday && <Badge variant="warning">Today</Badge>}
-                        </div>
-                        <div className="flex items-center gap-1 mt-1 text-gray-600">
-                          <Building2 className="h-4 w-4" />
-                          <span className="text-sm">
-                            {booking.shift?.organizer?.organization_name}
-                          </span>
-                        </div>
-
-                        <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <div className="flex items-center gap-2 text-gray-600">
-                            <Calendar className="h-4 w-4" />
-                            <span className="text-sm">{formatDate(booking.shift?.date)}</span>
-                          </div>
-                          <div className="flex items-center gap-2 text-gray-600">
-                            <Clock className="h-4 w-4" />
-                            <span className="text-sm">
-                              {formatTime(booking.shift?.start_time)} - {formatTime(booking.shift?.end_time)}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2 text-gray-600">
-                            <MapPin className="h-4 w-4" />
-                            <span className="text-sm">
-                              {booking.shift?.city}, {booking.shift?.province}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2 text-gray-600">
-                            <DollarSign className="h-4 w-4" />
-                            <span className="text-sm">${booking.shift?.hourly_rate}/hr</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        {isToday && (
-                          <Button
-                            onClick={() => handleCheckIn(booking.id)}
-                            disabled={processingId === booking.id}
-                          >
-                            {processingId === booking.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                            ) : (
-                              <LogIn className="h-4 w-4 mr-2" />
-                            )}
-                            Check In
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Completed Bookings */}
-      {completedBookings.length > 0 && (
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <CheckCircle className="h-5 w-5 text-green-600" />
-            Completed ({completedBookings.length})
-          </h2>
-          <div className="space-y-4">
-            {completedBookings.map((booking) => (
-              <Card key={booking.id}>
-                <CardContent className="p-6">
-                  <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-lg font-semibold text-gray-900">
-                          {booking.shift?.title}
-                        </h3>
-                        <Badge variant={getStatusVariant(booking.status)}>
-                          {getStatusLabel(booking.status)}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-1 mt-1 text-gray-600">
-                        <Building2 className="h-4 w-4" />
-                        <span className="text-sm">
-                          {booking.shift?.organizer?.organization_name}
-                        </span>
-                      </div>
-                      <div className="mt-2 text-sm text-gray-600">
-                        {formatDate(booking.shift?.date)} | {booking.hours_worked} hours worked
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-lg font-bold text-green-600">
-                        {formatCurrency(booking.therapist_payout || 0)}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {booking.status === 'completed' ? 'Paid' : 'Pending payment'}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* No Bookings */}
-      {bookings.length === 0 && (
+      {/* Bookings List */}
+      {bookings.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <Calendar className="h-12 w-12 mx-auto text-gray-400 mb-4" />
@@ -363,7 +162,115 @@ export default function TherapistBookingsPage() {
             </Link>
           </CardContent>
         </Card>
+      ) : (
+        <div className="space-y-4">
+          {bookings.map((booking) => {
+            const shift = booking.shift
+            const shiftDate = shift?.date?.toDate?.()
+            const formattedDate = shiftDate
+              ? shiftDate.toLocaleDateString('en-CA', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })
+              : 'Date TBD'
+
+            const isUpcoming = shiftDate && shiftDate >= now
+            const estimatedHours = shift
+              ? calculateHours(shift.startTime, shift.endTime)
+              : 0
+            const estimatedPay = shift ? estimatedHours * shift.hourlyRate : 0
+
+            return (
+              <Card key={booking.id} className={isUpcoming ? 'border-blue-200' : ''}>
+                <CardContent className="p-6">
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-3 flex-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-semibold text-gray-900">
+                          {shift?.title || 'Unknown Shift'}
+                        </h3>
+                        <Badge className={BOOKING_STATUS_COLORS[booking.status]}>
+                          {BOOKING_STATUS_LABELS[booking.status] || booking.status}
+                        </Badge>
+                      </div>
+
+                      {shift && (
+                        <>
+                          <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
+                            <span className="flex items-center gap-1">
+                              <Calendar className="h-4 w-4" />
+                              {formattedDate}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-4 w-4" />
+                              {shift.startTime} - {shift.endTime}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
+                            <span className="flex items-center gap-1">
+                              <MapPin className="h-4 w-4" />
+                              {shift.venueName && `${shift.venueName}, `}
+                              {shift.city}, {shift.province}
+                            </span>
+                            {shift.eventType && (
+                              <Badge variant="outline">
+                                {EVENT_TYPE_LABELS[shift.eventType] || shift.eventType}
+                              </Badge>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-4 pt-2 border-t">
+                            <div className="text-sm">
+                              <span className="text-gray-500">Rate:</span>
+                              <span className="ml-1 font-medium text-green-600">${shift.hourlyRate}/hr</span>
+                            </div>
+                            <div className="text-sm">
+                              <span className="text-gray-500">Est. Hours:</span>
+                              <span className="ml-1 font-medium">{estimatedHours.toFixed(1)}</span>
+                            </div>
+                            <div className="text-sm">
+                              <span className="text-gray-500">Est. Pay:</span>
+                              <span className="ml-1 font-medium text-green-600">${estimatedPay.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {booking.hoursWorked && (
+                        <div className="flex items-center gap-2 text-sm bg-green-50 p-2 rounded">
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                          <span>
+                            Worked {booking.hoursWorked} hours · Earned ${booking.therapistPayout?.toFixed(2) || '0.00'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {shift && (
+                      <Link href={`/therapist/shifts/${shift.id}`}>
+                        <Button variant="outline" size="sm">View Details</Button>
+                      </Link>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
       )}
     </div>
   )
+}
+
+function calculateHours(startTime: string, endTime: string): number {
+  const [startHour, startMin] = startTime.split(':').map(Number)
+  const [endHour, endMin] = endTime.split(':').map(Number)
+
+  const startMinutes = startHour * 60 + startMin
+  const endMinutes = endHour * 60 + endMin
+
+  return (endMinutes - startMinutes) / 60
 }

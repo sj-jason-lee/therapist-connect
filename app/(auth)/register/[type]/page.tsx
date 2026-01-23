@@ -3,8 +3,8 @@
 import { useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
-import { Mail, Lock, User, Loader2, AlertCircle, CheckCircle } from 'lucide-react'
+import { signUp, UserType } from '@/lib/firebase/auth'
+import { Mail, Lock, User, Loader2, AlertCircle } from 'lucide-react'
 
 export default function RegisterTypePage() {
   const router = useRouter()
@@ -17,7 +17,6 @@ export default function RegisterTypePage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
 
   const isValidType = userType === 'therapist' || userType === 'organizer'
 
@@ -57,70 +56,18 @@ export default function RegisterTypePage() {
       return
     }
 
-    const supabase = createClient()
-
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-          user_type: userType,
-        },
-        emailRedirectTo: `${window.location.origin}/api/auth/callback`,
-      },
-    })
-
-    if (signUpError) {
-      setError(signUpError.message)
+    try {
+      await signUp(email, password, fullName, userType as UserType)
+      // Redirect to onboarding
+      router.push(`/${userType}/onboarding`)
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to create account'
+      setError(errorMessage)
       setLoading(false)
-      return
     }
-
-    if (data.user) {
-      // Update the profile with full name
-      await supabase
-        .from('profiles')
-        .update({ full_name: fullName })
-        .eq('id', data.user.id)
-
-      setSuccess(true)
-    }
-  }
-
-  if (success) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-md w-full space-y-8 text-center">
-          <div className="flex justify-center">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
-              <CheckCircle className="h-8 w-8 text-green-600" />
-            </div>
-          </div>
-          <div>
-            <h2 className="text-3xl font-bold tracking-tight text-gray-900">
-              Check your email
-            </h2>
-            <p className="mt-4 text-gray-600">
-              We&apos;ve sent a confirmation link to <strong>{email}</strong>.
-              Please click the link to verify your account.
-            </p>
-          </div>
-          <div className="pt-4">
-            <Link
-              href="/login"
-              className="text-primary-600 hover:text-primary-500 font-medium"
-            >
-              Return to login
-            </Link>
-          </div>
-        </div>
-      </div>
-    )
   }
 
   const typeLabel = userType === 'therapist' ? 'Athletic Therapist' : 'Event Organizer'
-  const typeColor = userType === 'therapist' ? 'primary' : 'secondary'
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -258,10 +205,11 @@ export default function RegisterTypePage() {
           <button
             type="submit"
             disabled={loading}
-            className={`w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-${typeColor}-600 hover:bg-${typeColor}-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-${typeColor}-500 disabled:opacity-50 disabled:cursor-not-allowed`}
-            style={{
-              backgroundColor: userType === 'therapist' ? '#2563eb' : '#16a34a',
-            }}
+            className={`w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
+              userType === 'therapist'
+                ? 'bg-primary-600 hover:bg-primary-700'
+                : 'bg-secondary-600 hover:bg-secondary-700'
+            }`}
           >
             {loading ? (
               <>

@@ -21,6 +21,7 @@ import {
 
 interface SidebarProps {
   userType: 'therapist' | 'organizer' | 'admin'
+  isAdmin?: boolean
 }
 
 const therapistNavigation = [
@@ -47,25 +48,27 @@ const adminNavigation = [
   { name: 'Dashboard', href: '/admin', icon: Home },
   { name: 'Verifications', href: '/admin/verifications', icon: CheckSquare },
   { name: 'Users', href: '/admin/users', icon: Users },
-  { name: 'Transactions', href: '/admin/transactions', icon: BarChart3 },
 ]
 
-function SidebarContent({ userType, onNavigate }: { userType: SidebarProps['userType']; onNavigate?: () => void }) {
+function SidebarContent({ userType, isAdmin, onNavigate }: { userType: SidebarProps['userType']; isAdmin?: boolean; onNavigate?: () => void }) {
   const pathname = usePathname()
 
-  const navigation =
-    userType === 'therapist'
-      ? therapistNavigation
-      : userType === 'organizer'
-      ? organizerNavigation
-      : adminNavigation
+  // If user is admin, show admin navigation
+  const navigation = isAdmin
+    ? adminNavigation
+    : userType === 'therapist'
+    ? therapistNavigation
+    : userType === 'organizer'
+    ? organizerNavigation
+    : adminNavigation
 
-  const brandColor =
-    userType === 'therapist'
-      ? 'text-primary-600'
-      : userType === 'organizer'
-      ? 'text-secondary-600'
-      : 'text-purple-600'
+  const brandColor = isAdmin
+    ? 'text-purple-600'
+    : userType === 'therapist'
+    ? 'text-primary-600'
+    : userType === 'organizer'
+    ? 'text-secondary-600'
+    : 'text-purple-600'
 
   return (
     <div className="flex grow flex-col gap-y-5 overflow-y-auto bg-white px-6 pb-4">
@@ -117,7 +120,7 @@ function SidebarContent({ userType, onNavigate }: { userType: SidebarProps['user
   )
 }
 
-export function Sidebar({ userType }: SidebarProps) {
+export function Sidebar({ userType, isAdmin }: SidebarProps) {
   const { isOpen, close } = useMobileNav()
 
   return (
@@ -125,7 +128,7 @@ export function Sidebar({ userType }: SidebarProps) {
       {/* Desktop Sidebar */}
       <div className="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-64 lg:flex-col">
         <div className="flex grow flex-col border-r border-gray-200">
-          <SidebarContent userType={userType} />
+          <SidebarContent userType={userType} isAdmin={isAdmin} />
         </div>
       </div>
 
@@ -169,7 +172,7 @@ export function Sidebar({ userType }: SidebarProps) {
               </button>
             </div>
 
-            <SidebarContent userType={userType} onNavigate={close} />
+            <SidebarContent userType={userType} isAdmin={isAdmin} onNavigate={close} />
           </div>
         </div>
       </div>

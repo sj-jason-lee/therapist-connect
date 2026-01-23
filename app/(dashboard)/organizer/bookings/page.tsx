@@ -1,77 +1,129 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useAuth } from '@/lib/firebase/AuthContext'
+import {
+  getShiftsByOrganizer,
+  getBookingsByShift,
+  getShift,
+  getUserProfile,
+  getTherapistProfile,
+  Booking,
+  Shift,
+  UserProfile,
+  TherapistProfile,
+} from '@/lib/firebase/firestore'
+import Link from 'next/link'
+import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
   Calendar,
+  Loader2,
   Clock,
   MapPin,
+  AlertCircle,
   User,
-  DollarSign,
   CheckCircle,
 } from 'lucide-react'
-import { formatDate, formatTime, formatCurrency } from '@/lib/utils'
 
-export default async function OrganizerBookingsPage() {
-  const supabase = createClient()
+const BOOKING_STATUS_COLORS: Record<string, string> = {
+  confirmed: 'bg-blue-100 text-blue-800',
+  checked_in: 'bg-yellow-100 text-yellow-800',
+  checked_out: 'bg-purple-100 text-purple-800',
+  completed: 'bg-green-100 text-green-800',
+  cancelled: 'bg-red-100 text-red-800',
+  disputed: 'bg-orange-100 text-orange-800',
+}
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+const BOOKING_STATUS_LABELS: Record<string, string> = {
+  confirmed: 'Confirmed',
+  checked_in: 'Checked In',
+  checked_out: 'Checked Out',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  disputed: 'Disputed',
+}
 
-  // Get organizer
-  const { data: organizer, error: organizerError } = await supabase
-    .from('organizers')
-    .select('id')
-    .eq('user_id', user.id)
-    .single()
+interface BookingWithDetails extends Booking {
+  shift?: Shift | null
+  therapistUser?: UserProfile | null
+  therapistProfile?: TherapistProfile | null
+}
 
-  // If no organizer profile, redirect to complete profile
-  if (!organizer || organizerError) {
-    redirect('/organizer/profile')
-  }
+export default function OrganizerBookingsPage() {
+  const { user, loading: authLoading } = useAuth()
+  const [bookings, setBookings] = useState<BookingWithDetails[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  // Get all bookings for organizer's shifts
-  const { data: bookings } = await supabase
-    .from('bookings')
-    .select(`
-      *,
-      shift:shifts!inner(
-        *,
-        organizer_id
-      ),
-      therapist:therapists(
-        *,
-        profile:profiles(full_name, email, phone)
-      )
-    `)
-    .eq('shift.organizer_id', organizer.id)
-    .order('created_at', { ascending: false })
+  useEffect(() => {
+    async function fetchBookings() {
+      if (!user) return
 
-  const getStatusVariant = (status: string) => {
-    switch (status) {
-      case 'confirmed': return 'info'
-      case 'checked_in': return 'warning'
-      case 'checked_out': return 'success'
-      case 'completed': return 'success'
-      case 'cancelled': return 'error'
-      default: return 'default'
+      try {
+        // Get all shifts for this organizer
+        const shifts = await getShiftsByOrganizer(user.uid)
+
+        // Get bookings for all shifts
+        const allBookings: BookingWithDetails[] = []
+
+        for (const shift of shifts) {
+          const shiftBookings = await getBookingsByShift(shift.id)
+
+          for (const booking of shiftBookings) {
+            const [therapistUser, therapistProfile] = await Promise.all([
+              getUserProfile(booking.therapistId),
+              getTherapistProfile(booking.therapistId),
+            ])
+
+            allBookings.push({
+              ...booking,
+              shift,
+              therapistUser,
+              therapistProfile,
+            })
+          }
+        }
+
+        // Sort by shift date (upcoming first)
+        allBookings.sort((a, b) => {
+          const dateA = a.shift?.date?.toDate?.() || new Date(0)
+          const dateB = b.shift?.date?.toDate?.() || new Date(0)
+          return dateA.getTime() - dateB.getTime()
+        })
+
+        setBookings(allBookings)
+      } catch (err) {
+        console.error('Error fetching bookings:', err)
+        setError('Failed to load bookings')
+      } finally {
+        setLoading(false)
+      }
     }
-  }
 
-  const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'confirmed': return 'Upcoming'
-      case 'checked_in': return 'In Progress'
-      case 'checked_out': return 'Awaiting Payment'
-      case 'completed': return 'Completed'
-      case 'cancelled': return 'Cancelled'
-      default: return status
+    if (!authLoading) {
+      fetchBookings()
     }
+  }, [user, authLoading])
+
+  if (authLoading || loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary-600" />
+      </div>
+    )
   }
 
-  const upcomingBookings = bookings?.filter(b => b.status === 'confirmed') || []
-  const activeBookings = bookings?.filter(b => b.status === 'checked_in') || []
-  const completedBookings = bookings?.filter(b => ['checked_out', 'completed'].includes(b.status)) || []
+  const now = new Date()
+  const upcomingBookings = bookings.filter(b => {
+    const shiftDate = b.shift?.date?.toDate?.()
+    return shiftDate && shiftDate >= now && b.status === 'confirmed'
+  })
+  const activeBookings = bookings.filter(b =>
+    b.status === 'checked_in' || b.status === 'checked_out'
+  )
+  const completedBookings = bookings.filter(b => b.status === 'completed')
 
   return (
     <div className="space-y-6">
@@ -79,6 +131,13 @@ export default async function OrganizerBookingsPage() {
         <h1 className="text-2xl font-bold text-gray-900">Bookings</h1>
         <p className="text-gray-500 mt-1">View all confirmed therapist bookings for your shifts.</p>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -108,146 +167,8 @@ export default async function OrganizerBookingsPage() {
         </Card>
       </div>
 
-      {/* Active Bookings */}
-      {activeBookings.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="h-5 w-5 text-yellow-600" />
-              In Progress ({activeBookings.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {activeBookings.map((booking) => (
-              <div
-                key={booking.id}
-                className="p-4 bg-yellow-50 rounded-lg"
-              >
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                  <div>
-                    <h4 className="font-semibold text-gray-900">{booking.shift?.title}</h4>
-                    <div className="flex items-center gap-4 mt-2 text-sm text-gray-600">
-                      <span className="flex items-center gap-1">
-                        <User className="h-4 w-4" />
-                        {booking.therapist?.profile?.full_name}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-4 w-4" />
-                        Checked in: {new Date(booking.check_in_time).toLocaleTimeString()}
-                      </span>
-                    </div>
-                  </div>
-                  <Badge variant="warning">In Progress</Badge>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Upcoming Bookings */}
-      {upcomingBookings.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Calendar className="h-5 w-5 text-blue-600" />
-              Upcoming ({upcomingBookings.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {upcomingBookings.map((booking) => (
-              <div
-                key={booking.id}
-                className="p-4 bg-gray-50 rounded-lg"
-              >
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                  <div>
-                    <h4 className="font-semibold text-gray-900">{booking.shift?.title}</h4>
-                    <div className="flex flex-wrap items-center gap-4 mt-2 text-sm text-gray-600">
-                      <span className="flex items-center gap-1">
-                        <User className="h-4 w-4" />
-                        {booking.therapist?.profile?.full_name}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="h-4 w-4" />
-                        {formatDate(booking.shift?.date)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-4 w-4" />
-                        {formatTime(booking.shift?.start_time)} - {formatTime(booking.shift?.end_time)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <MapPin className="h-4 w-4" />
-                        {booking.shift?.city}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-semibold text-gray-900">
-                      ${booking.shift?.hourly_rate}/hr
-                    </p>
-                    <Badge variant="info" className="mt-1">Confirmed</Badge>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Completed Bookings */}
-      {completedBookings.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5 text-green-600" />
-              Completed ({completedBookings.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {completedBookings.map((booking) => (
-              <div
-                key={booking.id}
-                className="p-4 bg-gray-50 rounded-lg"
-              >
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                  <div>
-                    <h4 className="font-semibold text-gray-900">{booking.shift?.title}</h4>
-                    <div className="flex flex-wrap items-center gap-4 mt-2 text-sm text-gray-600">
-                      <span className="flex items-center gap-1">
-                        <User className="h-4 w-4" />
-                        {booking.therapist?.profile?.full_name}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="h-4 w-4" />
-                        {formatDate(booking.shift?.date)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-4 w-4" />
-                        {booking.hours_worked} hours
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-semibold text-gray-900">
-                      {formatCurrency(booking.amount_due || 0)}
-                    </p>
-                    <Badge
-                      variant={booking.status === 'completed' ? 'success' : 'warning'}
-                      className="mt-1"
-                    >
-                      {booking.status === 'completed' ? 'Paid' : 'Pending Payment'}
-                    </Badge>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* No Bookings */}
-      {(!bookings || bookings.length === 0) && (
+      {/* Bookings List */}
+      {bookings.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <Calendar className="h-12 w-12 mx-auto text-gray-400 mb-4" />
@@ -255,8 +176,112 @@ export default async function OrganizerBookingsPage() {
             <p className="text-gray-500 mt-1">
               When therapists are confirmed for your shifts, they&apos;ll appear here.
             </p>
+            <Link href="/organizer/shifts/new" className="mt-4 inline-block">
+              <Button>Post a New Shift</Button>
+            </Link>
           </CardContent>
         </Card>
+      ) : (
+        <div className="space-y-4">
+          {bookings.map((booking) => {
+            const shift = booking.shift
+            const shiftDate = shift?.date?.toDate?.()
+            const formattedDate = shiftDate
+              ? shiftDate.toLocaleDateString('en-CA', {
+                  weekday: 'short',
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric',
+                })
+              : 'Date TBD'
+
+            const isUpcoming = shiftDate && shiftDate >= now
+
+            return (
+              <Card key={booking.id} className={isUpcoming ? 'border-blue-200' : ''}>
+                <CardContent className="p-6">
+                  <div className="flex items-start gap-4">
+                    {/* Therapist Avatar */}
+                    <div className="h-12 w-12 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
+                      <User className="h-6 w-6 text-gray-600" />
+                    </div>
+
+                    {/* Booking Details */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-lg font-semibold text-gray-900">
+                          {booking.therapistUser?.fullName || 'Unknown Therapist'}
+                        </h3>
+                        <Badge className={BOOKING_STATUS_COLORS[booking.status]}>
+                          {BOOKING_STATUS_LABELS[booking.status] || booking.status}
+                        </Badge>
+                        {booking.therapistProfile?.credentialsVerified && (
+                          <Badge className="bg-green-100 text-green-800">
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                            Verified
+                          </Badge>
+                        )}
+                      </div>
+
+                      <p className="text-sm text-gray-500 mt-1">
+                        {booking.therapistProfile?.city}, {booking.therapistProfile?.province}
+                        {booking.therapistUser?.phone && (
+                          <span> · {booking.therapistUser.phone}</span>
+                        )}
+                      </p>
+
+                      {/* Shift Info */}
+                      {shift && (
+                        <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+                          <p className="font-medium text-gray-900 text-sm">{shift.title}</p>
+                          <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-gray-600">
+                            <span className="flex items-center gap-1">
+                              <Calendar className="h-3 w-3" />
+                              {formattedDate}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {shift.startTime} - {shift.endTime}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <MapPin className="h-3 w-3" />
+                              {shift.venueName || shift.city}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Completed Info */}
+                      {booking.status === 'completed' && booking.hoursWorked && (
+                        <div className="mt-3 flex items-center gap-4 text-sm">
+                          <span>
+                            <span className="text-gray-500">Hours:</span>
+                            <span className="ml-1 font-medium">{booking.hoursWorked}</span>
+                          </span>
+                          <span>
+                            <span className="text-gray-500">Amount:</span>
+                            <span className="ml-1 font-medium text-green-600">
+                              ${booking.amountDue?.toFixed(2) || '0.00'}
+                            </span>
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex flex-col gap-2 flex-shrink-0">
+                      {shift && (
+                        <Link href={`/organizer/shifts/${shift.id}`}>
+                          <Button variant="outline" size="sm">View Shift</Button>
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
       )}
     </div>
   )

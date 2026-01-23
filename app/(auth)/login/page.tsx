@@ -1,56 +1,43 @@
 'use client'
 
-import { Suspense, useState } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
+import { signIn } from '@/lib/firebase/auth'
+import { useAuth } from '@/lib/firebase/AuthContext'
 import { Mail, Lock, Loader2, AlertCircle } from 'lucide-react'
 
 function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const redirect = searchParams.get('redirect') || ''
+  const { user, profile, loading: authLoading } = useAuth()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Redirect if already logged in
+  useEffect(() => {
+    if (!authLoading && user && profile) {
+      const destination = redirect || `/${profile.userType}`
+      router.push(destination)
+    }
+  }, [user, profile, authLoading, redirect, router])
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError(null)
 
-    const supabase = createClient()
-
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-
-    if (signInError) {
-      setError(signInError.message)
+    try {
+      await signIn(email, password)
+      // Auth state change will trigger redirect via useEffect
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to sign in'
+      setError(errorMessage)
       setLoading(false)
-      return
-    }
-
-    if (data.user) {
-      // Get user profile to determine redirect
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('user_type')
-        .eq('id', data.user.id)
-        .single()
-
-      if (profileError) {
-        console.error('Profile fetch error:', profileError)
-      }
-
-      // Use profile user_type, fallback to metadata, then default to therapist
-      const userType = profile?.user_type || data.user.user_metadata?.user_type || 'therapist'
-      const destination = redirect || `/${userType}`
-      router.push(destination)
-      router.refresh()
     }
   }
 

@@ -2,9 +2,8 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { signOut } from '@/lib/firebase/auth'
 import { Menu, Bell, LogOut, User, ChevronDown } from 'lucide-react'
-import { cn } from '@/lib/utils'
 import { useMobileNav } from './mobile-nav-context'
 
 interface NavbarProps {
@@ -22,10 +21,8 @@ export function Navbar({ user }: NavbarProps) {
   const { toggle: toggleMobileMenu } = useMobileNav()
 
   const handleSignOut = async () => {
-    const supabase = createClient()
-    await supabase.auth.signOut()
+    await signOut()
     router.push('/login')
-    router.refresh()
   }
 
   const userTypeLabel =

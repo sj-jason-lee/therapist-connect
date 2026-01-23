@@ -1,21 +1,22 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { useAuth } from '@/lib/firebase/AuthContext'
+import { updateUserProfile, updateOrganizerProfile, getOrganizerProfile, OrganizerProfile } from '@/lib/firebase/firestore'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { CANADIAN_PROVINCES, ORGANIZATION_TYPE_LABELS } from '@/lib/constants'
-import { Loader2, Save, CheckCircle } from 'lucide-react'
+import { Loader2, Save, CheckCircle, AlertCircle } from 'lucide-react'
 
 export default function OrganizerProfilePage() {
-  const router = useRouter()
-  const [loading, setLoading] = useState(true)
+  const { user, profile, loading: authLoading } = useAuth()
+  const [organizer, setOrganizer] = useState<OrganizerProfile | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
   const [formData, setFormData] = useState({
     full_name: '',
@@ -29,47 +30,36 @@ export default function OrganizerProfilePage() {
   })
 
   useEffect(() => {
-    const loadProfile = async () => {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+    async function fetchOrganizer() {
+      if (!user) return
 
-      if (!user) {
-        router.push('/login')
-        return
+      try {
+        const org = await getOrganizerProfile(user.uid)
+        setOrganizer(org)
+
+        if (profile) {
+          setFormData({
+            full_name: profile.fullName || '',
+            phone: profile.phone || '',
+            organization_name: org?.organizationName || '',
+            organization_type: org?.organizationType || '',
+            address: org?.address || '',
+            city: org?.city || '',
+            province: org?.province || '',
+            postal_code: org?.postalCode || '',
+          })
+        }
+      } catch (err) {
+        console.error('Error fetching organizer:', err)
+      } finally {
+        setLoading(false)
       }
-
-      // Get profile
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
-
-      // Get organizer data
-      const { data: organizer } = await supabase
-        .from('organizers')
-        .select('*')
-        .eq('user_id', user.id)
-        .single()
-
-      if (profile && organizer) {
-        setFormData({
-          full_name: profile.full_name || '',
-          phone: profile.phone || '',
-          organization_name: organizer.organization_name || '',
-          organization_type: organizer.organization_type || '',
-          address: organizer.address || '',
-          city: organizer.city || '',
-          province: organizer.province || '',
-          postal_code: organizer.postal_code || '',
-        })
-      }
-
-      setLoading(false)
     }
 
-    loadProfile()
-  }, [router])
+    if (!authLoading) {
+      fetchOrganizer()
+    }
+  }, [user, profile, authLoading])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target
@@ -82,60 +72,46 @@ export default function OrganizerProfilePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!user) return
+
     setSaving(true)
     setError(null)
+    setSaved(false)
 
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-
-    if (!user) {
-      setError('Not authenticated')
-      setSaving(false)
-      return
-    }
-
-    // Update profile
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .update({
-        full_name: formData.full_name,
-        phone: formData.phone,
+    try {
+      // Update user profile
+      await updateUserProfile(user.uid, {
+        fullName: formData.full_name,
+        phone: formData.phone || undefined,
       })
-      .eq('id', user.id)
 
-    if (profileError) {
-      setError(profileError.message)
+      // Build organizer profile update
+      const organizerUpdate: Record<string, any> = {
+        organizationName: formData.organization_name,
+        organizationType: formData.organization_type,
+        city: formData.city,
+        province: formData.province,
+      }
+
+      if (formData.address) organizerUpdate.address = formData.address
+      if (formData.postal_code) organizerUpdate.postalCode = formData.postal_code
+
+      await updateOrganizerProfile(user.uid, organizerUpdate)
+
+      setSaved(true)
+    } catch (err) {
+      console.error('Error saving profile:', err)
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+      setError(`Failed to save profile: ${errorMessage}`)
+    } finally {
       setSaving(false)
-      return
     }
-
-    // Update organizer
-    const { error: organizerError } = await supabase
-      .from('organizers')
-      .update({
-        organization_name: formData.organization_name || null,
-        organization_type: formData.organization_type || null,
-        address: formData.address || null,
-        city: formData.city || null,
-        province: formData.province || null,
-        postal_code: formData.postal_code || null,
-      })
-      .eq('user_id', user.id)
-
-    if (organizerError) {
-      setError(organizerError.message)
-      setSaving(false)
-      return
-    }
-
-    setSaved(true)
-    setSaving(false)
   }
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-secondary-600" />
+        <Loader2 className="h-8 w-8 animate-spin text-primary-600" />
       </div>
     )
   }
@@ -186,38 +162,37 @@ export default function OrganizerProfilePage() {
           </CardContent>
         </Card>
 
-        {/* Organization Information */}
+        {/* Organization Details */}
         <Card>
           <CardHeader>
             <CardTitle>Organization Details</CardTitle>
-            <CardDescription>Information about your organization or business.</CardDescription>
+            <CardDescription>Information about your organization.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input
-                label="Organization Name"
-                name="organization_name"
-                value={formData.organization_name}
-                onChange={handleChange}
-                placeholder="e.g., Toronto Youth Hockey League"
-              />
-              <Select
-                label="Organization Type"
-                name="organization_type"
-                value={formData.organization_type}
-                onChange={handleChange}
-                options={organizationTypeOptions}
-                placeholder="Select type"
-              />
-            </div>
+            <Input
+              label="Organization Name"
+              name="organization_name"
+              value={formData.organization_name}
+              onChange={handleChange}
+              placeholder="Toronto Youth Hockey League"
+              required
+            />
+            <Select
+              label="Organization Type"
+              name="organization_type"
+              value={formData.organization_type}
+              onChange={handleChange}
+              options={organizationTypeOptions}
+              placeholder="Select type"
+            />
           </CardContent>
         </Card>
 
-        {/* Address */}
+        {/* Location */}
         <Card>
           <CardHeader>
-            <CardTitle>Address</CardTitle>
-            <CardDescription>Your organization&apos;s primary address.</CardDescription>
+            <CardTitle>Location</CardTitle>
+            <CardDescription>Your organization&apos;s primary location.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Input
@@ -234,6 +209,7 @@ export default function OrganizerProfilePage() {
                 value={formData.city}
                 onChange={handleChange}
                 placeholder="Toronto"
+                required
               />
               <Select
                 label="Province"
@@ -256,8 +232,9 @@ export default function OrganizerProfilePage() {
 
         {/* Error Display */}
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-600">
-            {error}
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
 
@@ -269,9 +246,18 @@ export default function OrganizerProfilePage() {
               Saved successfully
             </span>
           )}
-          <Button type="submit" variant="secondary" loading={saving}>
-            <Save className="h-4 w-4 mr-2" />
-            Save Changes
+          <Button type="submit" disabled={saving}>
+            {saving ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4 mr-2" />
+                Save Changes
+              </>
+            )}
           </Button>
         </div>
       </form>

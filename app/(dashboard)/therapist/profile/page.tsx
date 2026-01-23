@@ -1,19 +1,19 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { useAuth } from '@/lib/firebase/AuthContext'
+import { updateUserProfile, updateTherapistProfile } from '@/lib/firebase/firestore'
+import { Timestamp } from 'firebase/firestore'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { CANADIAN_PROVINCES } from '@/lib/constants'
-import { Loader2, Save, CheckCircle } from 'lucide-react'
+import { Loader2, Save, CheckCircle, AlertCircle } from 'lucide-react'
 
 export default function TherapistProfilePage() {
-  const router = useRouter()
-  const [loading, setLoading] = useState(true)
+  const { user, profile, therapist, loading } = useAuth()
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -36,55 +36,36 @@ export default function TherapistProfilePage() {
     hourly_rate_max: 0,
   })
 
-  useEffect(() => {
-    const loadProfile = async () => {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-
-      if (!user) {
-        router.push('/login')
-        return
-      }
-
-      // Get profile
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
-
-      // Get therapist data
-      const { data: therapist } = await supabase
-        .from('therapists')
-        .select('*')
-        .eq('user_id', user.id)
-        .single()
-
-      if (profile && therapist) {
-        setFormData({
-          full_name: profile.full_name || '',
-          phone: profile.phone || '',
-          cata_number: therapist.cata_number || '',
-          cata_expiry: therapist.cata_expiry || '',
-          insurance_provider: therapist.insurance_provider || '',
-          insurance_policy_number: therapist.insurance_policy_number || '',
-          insurance_expiry: therapist.insurance_expiry || '',
-          bls_expiry: therapist.bls_expiry || '',
-          bio: therapist.bio || '',
-          city: therapist.city || '',
-          province: therapist.province || '',
-          postal_code: therapist.postal_code || '',
-          travel_radius_km: therapist.travel_radius_km || 50,
-          hourly_rate_min: therapist.hourly_rate_min || 0,
-          hourly_rate_max: therapist.hourly_rate_max || 0,
-        })
-      }
-
-      setLoading(false)
+  // Helper to convert Timestamp to date string
+  const timestampToDateString = (timestamp: any): string => {
+    if (!timestamp) return ''
+    if (timestamp.toDate) {
+      return timestamp.toDate().toISOString().split('T')[0]
     }
+    return ''
+  }
 
-    loadProfile()
-  }, [router])
+  useEffect(() => {
+    if (profile && therapist) {
+      setFormData({
+        full_name: profile.fullName || '',
+        phone: profile.phone || '',
+        cata_number: therapist.cataNumber || '',
+        cata_expiry: timestampToDateString(therapist.cataExpiry),
+        insurance_provider: therapist.insuranceProvider || '',
+        insurance_policy_number: therapist.insurancePolicyNumber || '',
+        insurance_expiry: timestampToDateString(therapist.insuranceExpiry),
+        bls_expiry: timestampToDateString(therapist.blsExpiry),
+        bio: therapist.bio || '',
+        city: therapist.city || '',
+        province: therapist.province || '',
+        postal_code: therapist.postalCode || '',
+        travel_radius_km: therapist.travelRadiusKm || 50,
+        hourly_rate_min: therapist.hourlyRateMin || 0,
+        hourly_rate_max: therapist.hourlyRateMax || 0,
+      })
+    }
+  }, [profile, therapist])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
@@ -97,88 +78,59 @@ export default function TherapistProfilePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!user) return
+
     setSaving(true)
     setError(null)
+    setSaved(false)
 
-    // Validate rate range
-    if (formData.hourly_rate_min && formData.hourly_rate_max) {
-      if (Number(formData.hourly_rate_min) > Number(formData.hourly_rate_max)) {
-        setError('Minimum hourly rate cannot be greater than maximum rate')
-        setSaving(false)
-        return
+    try {
+      // Update user profile
+      await updateUserProfile(user.uid, {
+        fullName: formData.full_name,
+        phone: formData.phone || undefined,
+      })
+
+      // Build therapist profile update
+      const therapistUpdate: Record<string, any> = {
+        bio: formData.bio || undefined,
+        city: formData.city,
+        province: formData.province,
+        postalCode: formData.postal_code || undefined,
+        travelRadiusKm: Number(formData.travel_radius_km) || 50,
+        hourlyRateMin: Number(formData.hourly_rate_min) || 0,
+        hourlyRateMax: Number(formData.hourly_rate_max) || undefined,
+        cataNumber: formData.cata_number || undefined,
+        insuranceProvider: formData.insurance_provider || undefined,
+        insurancePolicyNumber: formData.insurance_policy_number || undefined,
       }
-    }
 
-    // Validate expiry dates are in the future
-    const today = new Date().toISOString().split('T')[0]
-    if (formData.cata_expiry && formData.cata_expiry < today) {
-      setError('CATA expiry date must be in the future')
+      // Add date fields if provided
+      if (formData.cata_expiry) {
+        therapistUpdate.cataExpiry = Timestamp.fromDate(new Date(formData.cata_expiry))
+      }
+      if (formData.insurance_expiry) {
+        therapistUpdate.insuranceExpiry = Timestamp.fromDate(new Date(formData.insurance_expiry))
+      }
+      if (formData.bls_expiry) {
+        therapistUpdate.blsExpiry = Timestamp.fromDate(new Date(formData.bls_expiry))
+      }
+
+      // Filter out undefined values
+      const cleanUpdate = Object.fromEntries(
+        Object.entries(therapistUpdate).filter(([_, v]) => v !== undefined)
+      )
+
+      await updateTherapistProfile(user.uid, cleanUpdate)
+
+      setSaved(true)
+    } catch (err) {
+      console.error('Error saving profile:', err)
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+      setError(`Failed to save profile: ${errorMessage}`)
+    } finally {
       setSaving(false)
-      return
     }
-    if (formData.insurance_expiry && formData.insurance_expiry < today) {
-      setError('Insurance expiry date must be in the future')
-      setSaving(false)
-      return
-    }
-    if (formData.bls_expiry && formData.bls_expiry < today) {
-      setError('BLS expiry date must be in the future')
-      setSaving(false)
-      return
-    }
-
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-
-    if (!user) {
-      setError('Not authenticated')
-      setSaving(false)
-      return
-    }
-
-    // Update profile
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .update({
-        full_name: formData.full_name,
-        phone: formData.phone,
-      })
-      .eq('id', user.id)
-
-    if (profileError) {
-      setError(profileError.message)
-      setSaving(false)
-      return
-    }
-
-    // Update therapist
-    const { error: therapistError } = await supabase
-      .from('therapists')
-      .update({
-        cata_number: formData.cata_number || null,
-        cata_expiry: formData.cata_expiry || null,
-        insurance_provider: formData.insurance_provider || null,
-        insurance_policy_number: formData.insurance_policy_number || null,
-        insurance_expiry: formData.insurance_expiry || null,
-        bls_expiry: formData.bls_expiry || null,
-        bio: formData.bio || null,
-        city: formData.city || null,
-        province: formData.province || null,
-        postal_code: formData.postal_code || null,
-        travel_radius_km: formData.travel_radius_km,
-        hourly_rate_min: formData.hourly_rate_min || null,
-        hourly_rate_max: formData.hourly_rate_max || null,
-      })
-      .eq('user_id', user.id)
-
-    if (therapistError) {
-      setError(therapistError.message)
-      setSaving(false)
-      return
-    }
-
-    setSaved(true)
-    setSaving(false)
   }
 
   if (loading) {
@@ -259,7 +211,6 @@ export default function TherapistProfilePage() {
                 type="date"
                 value={formData.cata_expiry}
                 onChange={handleChange}
-                min={new Date().toISOString().split('T')[0]}
               />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -285,7 +236,6 @@ export default function TherapistProfilePage() {
                 type="date"
                 value={formData.insurance_expiry}
                 onChange={handleChange}
-                min={new Date().toISOString().split('T')[0]}
               />
               <Input
                 label="BLS Certification Expiry"
@@ -293,7 +243,6 @@ export default function TherapistProfilePage() {
                 type="date"
                 value={formData.bls_expiry}
                 onChange={handleChange}
-                min={new Date().toISOString().split('T')[0]}
               />
             </div>
           </CardContent>
@@ -376,8 +325,9 @@ export default function TherapistProfilePage() {
 
         {/* Error Display */}
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-600">
-            {error}
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
 
@@ -389,9 +339,18 @@ export default function TherapistProfilePage() {
               Saved successfully
             </span>
           )}
-          <Button type="submit" loading={saving}>
-            <Save className="h-4 w-4 mr-2" />
-            Save Changes
+          <Button type="submit" disabled={saving}>
+            {saving ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4 mr-2" />
+                Save Changes
+              </>
+            )}
           </Button>
         </div>
       </form>

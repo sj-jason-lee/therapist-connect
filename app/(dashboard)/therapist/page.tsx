@@ -1,9 +1,20 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useAuth } from '@/lib/firebase/AuthContext'
+import {
+  getApplicationsByTherapist,
+  getBookingsByTherapist,
+  getShift,
+  Application,
+  Booking,
+  Shift,
+} from '@/lib/firebase/firestore'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { SkeletonStats, Skeleton } from '@/components/ui/skeleton'
 import {
   AlertCircle,
   CheckCircle,
@@ -12,76 +23,123 @@ import {
   Calendar,
   FileCheck,
   ArrowRight,
+  Loader2,
+  MapPin,
 } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils'
 
-export default async function TherapistDashboardPage() {
-  const supabase = createClient()
+interface BookingWithShift extends Booking {
+  shift?: Shift | null
+}
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+export default function TherapistDashboardPage() {
+  const { user, profile, therapist, loading: authLoading } = useAuth()
+  const [stats, setStats] = useState({
+    pendingApplications: 0,
+    acceptedApplications: 0,
+    upcomingBookings: 0,
+    totalEarnings: 0,
+  })
+  const [upcomingBookings, setUpcomingBookings] = useState<BookingWithShift[]>([])
+  const [loading, setLoading] = useState(true)
 
-  // Get therapist profile
-  const { data: therapist } = await supabase
-    .from('therapists')
-    .select('*')
-    .eq('user_id', user.id)
-    .single()
+  useEffect(() => {
+    async function fetchStats() {
+      if (!user) return
 
-  // Get profile info
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single()
+      try {
+        const [applications, bookings] = await Promise.all([
+          getApplicationsByTherapist(user.uid),
+          getBookingsByTherapist(user.uid),
+        ])
 
-  // Get application stats
-  const { count: pendingApplications } = await supabase
-    .from('applications')
-    .select('*', { count: 'exact', head: true })
-    .eq('therapist_id', therapist?.id)
-    .eq('status', 'pending')
+        const pendingApplications = applications.filter(a => a.status === 'pending').length
+        const acceptedApplications = applications.filter(a => a.status === 'accepted').length
 
-  const { count: acceptedApplications } = await supabase
-    .from('applications')
-    .select('*', { count: 'exact', head: true })
-    .eq('therapist_id', therapist?.id)
-    .eq('status', 'accepted')
+        // Fetch shift details for bookings
+        const bookingsWithShifts = await Promise.all(
+          bookings.map(async (booking) => {
+            const shift = await getShift(booking.shiftId)
+            return { ...booking, shift }
+          })
+        )
 
-  // Get upcoming bookings
-  const { data: upcomingBookings } = await supabase
-    .from('bookings')
-    .select(`
-      *,
-      shift:shifts(*)
-    `)
-    .eq('therapist_id', therapist?.id)
-    .in('status', ['confirmed', 'checked_in'])
-    .order('created_at', { ascending: true })
-    .limit(5)
+        const now = new Date()
+        const upcoming = bookingsWithShifts.filter(b => {
+          const shiftDate = b.shift?.date?.toDate?.()
+          return shiftDate && shiftDate >= now && b.status === 'confirmed'
+        })
 
-  // Get recent earnings
-  const { data: recentEarnings } = await supabase
-    .from('bookings')
-    .select('therapist_payout')
-    .eq('therapist_id', therapist?.id)
-    .eq('status', 'completed')
-    .not('therapist_payout', 'is', null)
+        const totalEarnings = bookings
+          .filter(b => b.status === 'completed')
+          .reduce((sum, b) => sum + (b.therapistPayout || 0), 0)
 
-  const totalEarnings = recentEarnings?.reduce(
-    (sum, booking) => sum + (booking.therapist_payout || 0),
-    0
-  ) || 0
+        setStats({
+          pendingApplications,
+          acceptedApplications,
+          upcomingBookings: upcoming.length,
+          totalEarnings,
+        })
 
-  // Check profile completion
-  const isProfileComplete = therapist?.cata_number && therapist?.city && therapist?.province
-  const isCredentialsVerified = therapist?.credentials_verified
+        // Sort upcoming by date and take first 3
+        upcoming.sort((a, b) => {
+          const dateA = a.shift?.date?.toDate?.() || new Date(0)
+          const dateB = b.shift?.date?.toDate?.() || new Date(0)
+          return dateA.getTime() - dateB.getTime()
+        })
+        setUpcomingBookings(upcoming.slice(0, 3))
+      } catch (err) {
+        console.error('Error fetching stats:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (!authLoading) {
+      fetchStats()
+    }
+  }, [user, authLoading])
+
+  if (authLoading || loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <Skeleton className="h-8 w-64 mb-2" />
+          <Skeleton className="h-5 w-96" />
+        </div>
+        <SkeletonStats />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card>
+            <CardHeader>
+              <Skeleton className="h-6 w-32" />
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <Skeleton className="h-6 w-40" />
+            </CardHeader>
+            <CardContent>
+              <Skeleton className="h-32 w-full" />
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
+
+  const isProfileComplete = therapist?.cataNumber && therapist?.city && therapist?.province
+  const isCredentialsVerified = therapist?.credentialsVerified
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">
-          Welcome back, {profile?.full_name?.split(' ')[0] || 'Therapist'}
+          Welcome back, {profile?.fullName?.split(' ')[0] || 'Therapist'}
         </h1>
         <p className="text-gray-500 mt-1">Here&apos;s what&apos;s happening with your account.</p>
       </div>
@@ -98,7 +156,7 @@ export default async function TherapistDashboardPage() {
                   Your profile is incomplete. Add your credentials and location to start applying for shifts.
                 </p>
                 <Link
-                  href="/therapist/profile"
+                  href="/therapist/onboarding"
                   className="text-sm font-medium text-yellow-800 hover:text-yellow-900 mt-2 inline-flex items-center"
                 >
                   Complete profile <ArrowRight className="h-4 w-4 ml-1" />
@@ -134,7 +192,7 @@ export default async function TherapistDashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-500">Pending Applications</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{pendingApplications || 0}</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{stats.pendingApplications}</p>
               </div>
               <div className="h-12 w-12 bg-yellow-100 rounded-lg flex items-center justify-center">
                 <Clock className="h-6 w-6 text-yellow-600" />
@@ -148,7 +206,7 @@ export default async function TherapistDashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-500">Accepted Applications</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{acceptedApplications || 0}</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{stats.acceptedApplications}</p>
               </div>
               <div className="h-12 w-12 bg-green-100 rounded-lg flex items-center justify-center">
                 <CheckCircle className="h-6 w-6 text-green-600" />
@@ -162,7 +220,7 @@ export default async function TherapistDashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-500">Upcoming Shifts</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{upcomingBookings?.length || 0}</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{stats.upcomingBookings}</p>
               </div>
               <div className="h-12 w-12 bg-blue-100 rounded-lg flex items-center justify-center">
                 <Calendar className="h-6 w-6 text-blue-600" />
@@ -176,7 +234,7 @@ export default async function TherapistDashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-500">Total Earnings</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{formatCurrency(totalEarnings)}</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{formatCurrency(stats.totalEarnings)}</p>
               </div>
               <div className="h-12 w-12 bg-primary-100 rounded-lg flex items-center justify-center">
                 <DollarSign className="h-6 w-6 text-primary-600" />
@@ -219,31 +277,45 @@ export default async function TherapistDashboardPage() {
             <CardTitle>Upcoming Bookings</CardTitle>
           </CardHeader>
           <CardContent>
-            {upcomingBookings && upcomingBookings.length > 0 ? (
-              <div className="space-y-3">
-                {upcomingBookings.map((booking: any) => (
-                  <div
-                    key={booking.id}
-                    className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                  >
-                    <div>
-                      <p className="font-medium text-gray-900">{booking.shift?.title}</p>
-                      <p className="text-sm text-gray-500">
-                        {booking.shift?.date} at {booking.shift?.start_time}
-                      </p>
-                    </div>
-                    <Badge variant={booking.status === 'checked_in' ? 'success' : 'info'}>
-                      {booking.status === 'checked_in' ? 'In Progress' : 'Confirmed'}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            ) : (
+            {upcomingBookings.length === 0 ? (
               <div className="text-center py-6 text-gray-500">
                 <Calendar className="h-8 w-8 mx-auto mb-2 text-gray-400" />
                 <p>No upcoming bookings</p>
                 <Link href="/therapist/shifts" className="text-primary-600 hover:text-primary-700 text-sm">
                   Browse available shifts
+                </Link>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {upcomingBookings.map((booking) => {
+                  const shift = booking.shift
+                  const shiftDate = shift?.date?.toDate?.()
+                  const formattedDate = shiftDate
+                    ? shiftDate.toLocaleDateString('en-CA', {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                      })
+                    : 'TBD'
+
+                  return (
+                    <div key={booking.id} className="p-3 bg-gray-50 rounded-lg">
+                      <p className="font-medium text-gray-900">{shift?.title || 'Unknown Shift'}</p>
+                      <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
+                        <span className="flex items-center gap-1">
+                          <Calendar className="h-3 w-3" />
+                          {formattedDate}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <MapPin className="h-3 w-3" />
+                          {shift?.city}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+                <Link href="/therapist/bookings" className="text-primary-600 hover:text-primary-700 text-sm block text-center">
+                  View all bookings
                 </Link>
               </div>
             )}
@@ -259,7 +331,7 @@ export default async function TherapistDashboardPage() {
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-              {therapist?.cata_number ? (
+              {therapist?.cataNumber ? (
                 <CheckCircle className="h-5 w-5 text-green-600" />
               ) : (
                 <AlertCircle className="h-5 w-5 text-gray-400" />
@@ -267,13 +339,13 @@ export default async function TherapistDashboardPage() {
               <div>
                 <p className="font-medium text-gray-900">CATA Certification</p>
                 <p className="text-sm text-gray-500">
-                  {therapist?.cata_number ? `#${therapist.cata_number}` : 'Not provided'}
+                  {therapist?.cataNumber ? `#${therapist.cataNumber}` : 'Not provided'}
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-              {therapist?.insurance_policy_number ? (
+              {therapist?.insurancePolicyNumber ? (
                 <CheckCircle className="h-5 w-5 text-green-600" />
               ) : (
                 <AlertCircle className="h-5 w-5 text-gray-400" />
@@ -281,13 +353,13 @@ export default async function TherapistDashboardPage() {
               <div>
                 <p className="font-medium text-gray-900">Liability Insurance</p>
                 <p className="text-sm text-gray-500">
-                  {therapist?.insurance_provider || 'Not provided'}
+                  {therapist?.insuranceProvider || 'Not provided'}
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-              {therapist?.bls_expiry ? (
+              {therapist?.blsExpiry ? (
                 <CheckCircle className="h-5 w-5 text-green-600" />
               ) : (
                 <AlertCircle className="h-5 w-5 text-gray-400" />
@@ -295,7 +367,7 @@ export default async function TherapistDashboardPage() {
               <div>
                 <p className="font-medium text-gray-900">BLS Certification</p>
                 <p className="text-sm text-gray-500">
-                  {therapist?.bls_expiry ? `Expires: ${therapist.bls_expiry}` : 'Not provided'}
+                  {therapist?.blsExpiry ? `Expires: ${therapist.blsExpiry}` : 'Not provided'}
                 </p>
               </div>
             </div>

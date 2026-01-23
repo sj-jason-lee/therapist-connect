@@ -1,88 +1,124 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { useAuth } from '@/lib/firebase/AuthContext'
+import { getOpenShifts, Shift } from '@/lib/firebase/firestore'
 import Link from 'next/link'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ErrorAlert } from '@/components/ui/error-alert'
+import { EmptyState } from '@/components/ui/empty-state'
+import { SkeletonShiftCard } from '@/components/ui/skeleton'
 import {
   MapPin,
   Calendar,
+  Loader2,
   Clock,
   DollarSign,
-  Building2,
   Users,
+  ChevronRight,
+  Search,
 } from 'lucide-react'
-import { formatDate, formatTime } from '@/lib/utils'
 import { EVENT_TYPE_LABELS, CANADIAN_PROVINCES, COMMON_SPORTS } from '@/lib/constants'
 import { ShiftFilters } from './shift-filters'
 
-interface PageProps {
-  searchParams: {
-    city?: string
-    province?: string
-    event_type?: string
-    sport?: string
-    min_rate?: string
-  }
-}
+export default function TherapistShiftsPage() {
+  const { therapist, loading: authLoading } = useAuth()
+  const searchParams = useSearchParams()
+  const [shifts, setShifts] = useState<Shift[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-export default async function TherapistShiftsPage({ searchParams }: PageProps) {
-  const supabase = createClient()
-  const params = searchParams
-
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  // Get therapist data for location filtering
-  const { data: therapist } = await supabase
-    .from('therapists')
-    .select('id, city, province, travel_radius_km')
-    .eq('user_id', user.id)
-    .single()
-
-  // Build query with filters
-  let query = supabase
-    .from('shifts')
-    .select(`
-      *,
-      organizer:organizers(
-        organization_name,
-        user_id,
-        profile:profiles(full_name)
-      )
-    `)
-    .eq('status', 'open')
-    .gte('date', new Date().toISOString().split('T')[0])
-
-  // Apply filters from search params
-  if (params.city) {
-    query = query.ilike('city', `%${params.city}%`)
-  }
-  if (params.province) {
-    query = query.eq('province', params.province)
-  }
-  if (params.event_type) {
-    query = query.eq('event_type', params.event_type)
-  }
-  if (params.sport) {
-    query = query.eq('sport', params.sport)
-  }
-  if (params.min_rate) {
-    query = query.gte('hourly_rate', parseFloat(params.min_rate))
+  // Get filter values from URL
+  const filters = {
+    city: searchParams.get('city') || '',
+    province: searchParams.get('province') || '',
+    event_type: searchParams.get('event_type') || '',
+    sport: searchParams.get('sport') || '',
+    min_rate: searchParams.get('min_rate') || '',
   }
 
-  const { data: shifts } = await query.order('date', { ascending: true })
+  useEffect(() => {
+    async function fetchShifts() {
+      try {
+        const fetchedShifts = await getOpenShifts()
 
-  // Get therapist's existing applications to filter out already-applied shifts
-  const { data: applications } = await supabase
-    .from('applications')
-    .select('shift_id')
-    .eq('therapist_id', therapist?.id)
+        // Apply filters
+        let filteredShifts = fetchedShifts
 
-  const appliedShiftIds = new Set(applications?.map((a) => a.shift_id) || [])
+        if (filters.city) {
+          filteredShifts = filteredShifts.filter(s =>
+            s.city?.toLowerCase().includes(filters.city.toLowerCase())
+          )
+        }
 
-  // Filter shifts that haven't been applied to
-  const availableShifts = shifts?.filter((shift) => !appliedShiftIds.has(shift.id)) || []
+        if (filters.province) {
+          filteredShifts = filteredShifts.filter(s => s.province === filters.province)
+        }
+
+        if (filters.event_type) {
+          filteredShifts = filteredShifts.filter(s => s.eventType === filters.event_type)
+        }
+
+        if (filters.sport) {
+          filteredShifts = filteredShifts.filter(s => s.sport === filters.sport)
+        }
+
+        if (filters.min_rate) {
+          const minRate = parseFloat(filters.min_rate)
+          filteredShifts = filteredShifts.filter(s => s.hourlyRate >= minRate)
+        }
+
+        // Sort by date ascending (soonest first)
+        filteredShifts.sort((a, b) => {
+          const dateA = a.date?.toDate?.() || new Date(0)
+          const dateB = b.date?.toDate?.() || new Date(0)
+          return dateA.getTime() - dateB.getTime()
+        })
+
+        setShifts(filteredShifts)
+      } catch (err) {
+        console.error('Error fetching shifts:', err)
+        setError('Failed to load shifts')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (!authLoading) {
+      fetchShifts()
+    }
+  }, [authLoading, filters.city, filters.province, filters.event_type, filters.sport, filters.min_rate])
+
+  if (authLoading || loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Available Shifts</h1>
+          <p className="text-gray-500 mt-1">Browse and apply to shifts in your area.</p>
+        </div>
+        <div className="space-y-4">
+          <SkeletonShiftCard />
+          <SkeletonShiftCard />
+          <SkeletonShiftCard />
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Available Shifts</h1>
+          <p className="text-gray-500 mt-1">Browse and apply to shifts in your area.</p>
+        </div>
+        <ErrorAlert message={error} onDismiss={() => setError(null)} />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -98,7 +134,7 @@ export default async function TherapistShiftsPage({ searchParams }: PageProps) {
         provinces={CANADIAN_PROVINCES}
         eventTypes={Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
         sports={COMMON_SPORTS}
-        currentFilters={params}
+        currentFilters={filters}
       />
 
       {/* Location Info */}
@@ -106,100 +142,96 @@ export default async function TherapistShiftsPage({ searchParams }: PageProps) {
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
           <MapPin className="h-5 w-5 text-blue-600" />
           <span className="text-blue-700">
-            Showing shifts near {therapist.city}, {therapist.province} (within {therapist.travel_radius_km}km)
+            Your location: {therapist.city}, {therapist.province} (travel radius: {therapist.travelRadiusKm || 50}km)
           </span>
         </div>
       )}
 
       {/* Shifts List */}
-      {availableShifts.length > 0 ? (
-        <div className="grid gap-4">
-          {availableShifts.map((shift) => (
-            <Card key={shift.id} className="hover:shadow-md transition-shadow">
-              <CardContent className="p-6">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                  <div className="flex-1">
-                    <div className="flex items-start gap-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
+      {shifts.length === 0 ? (
+        <EmptyState
+          icon={Search}
+          title="No available shifts"
+          description={
+            Object.values(filters).some(v => v)
+              ? 'No shifts match your filters. Try adjusting your search criteria.'
+              : 'There are no open shifts right now. Check back later!'
+          }
+        />
+      ) : (
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500">{shifts.length} shift{shifts.length !== 1 ? 's' : ''} available</p>
+
+          {shifts.map((shift) => {
+            const shiftDate = shift.date?.toDate?.()
+            const formattedDate = shiftDate
+              ? shiftDate.toLocaleDateString('en-CA', {
+                  weekday: 'short',
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric',
+                })
+              : 'Date TBD'
+
+            return (
+              <Link key={shift.id} href={`/therapist/shifts/${shift.id}`}>
+                <Card className="hover:shadow-md transition-shadow cursor-pointer">
+                  <CardContent className="p-6">
+                    <div className="flex items-start justify-between">
+                      <div className="space-y-2 flex-1">
+                        <div className="flex items-center gap-2">
                           <h3 className="text-lg font-semibold text-gray-900">
                             {shift.title}
                           </h3>
-                          <Badge variant="info">
-                            {EVENT_TYPE_LABELS[shift.event_type as keyof typeof EVENT_TYPE_LABELS]}
-                          </Badge>
+                          {shift.eventType && (
+                            <Badge variant="outline">
+                              {EVENT_TYPE_LABELS[shift.eventType] || shift.eventType}
+                            </Badge>
+                          )}
                           {shift.sport && (
-                            <Badge variant="default">{shift.sport}</Badge>
+                            <Badge variant="secondary">{shift.sport}</Badge>
                           )}
                         </div>
-                        <div className="flex items-center gap-1 mt-1 text-gray-600">
-                          <Building2 className="h-4 w-4" />
-                          <span className="text-sm">
-                            {shift.organizer?.organization_name || shift.organizer?.profile?.full_name}
+
+                        <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
+                          <span className="flex items-center gap-1">
+                            <Calendar className="h-4 w-4" />
+                            {formattedDate}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-4 w-4" />
+                            {shift.startTime} - {shift.endTime}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <MapPin className="h-4 w-4" />
+                            {shift.city}, {shift.province}
                           </span>
                         </div>
-                      </div>
-                    </div>
 
-                    <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-                      <div className="flex items-center gap-2 text-gray-600">
-                        <Calendar className="h-4 w-4" />
-                        <span className="text-sm">{formatDate(shift.date)}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-gray-600">
-                        <Clock className="h-4 w-4" />
-                        <span className="text-sm">
-                          {formatTime(shift.start_time)} - {formatTime(shift.end_time)}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 text-gray-600">
-                        <MapPin className="h-4 w-4" />
-                        <span className="text-sm">
-                          {shift.city}, {shift.province}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 text-gray-600">
-                        <Users className="h-4 w-4" />
-                        <span className="text-sm">
-                          {shift.therapists_needed} therapist{shift.therapists_needed > 1 ? 's' : ''} needed
-                        </span>
-                      </div>
-                    </div>
+                        <div className="flex flex-wrap items-center gap-4 text-sm">
+                          <span className="flex items-center gap-1 text-green-600 font-medium">
+                            <DollarSign className="h-4 w-4" />
+                            ${shift.hourlyRate}/hr
+                          </span>
+                          <span className="flex items-center gap-1 text-gray-600">
+                            <Users className="h-4 w-4" />
+                            {shift.therapistsNeeded} therapist{shift.therapistsNeeded !== 1 ? 's' : ''} needed
+                          </span>
+                        </div>
 
-                    {shift.description && (
-                      <p className="mt-3 text-sm text-gray-600 line-clamp-2">
-                        {shift.description}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col items-end gap-3">
-                    <div className="text-right">
-                      <div className="flex items-center gap-1 text-xl font-bold text-primary-600">
-                        <DollarSign className="h-5 w-5" />
-                        {shift.hourly_rate}/hr
+                        {shift.description && (
+                          <p className="text-sm text-gray-500 line-clamp-2">{shift.description}</p>
+                        )}
                       </div>
-                      <span className="text-sm text-gray-500">CAD</span>
+
+                      <ChevronRight className="h-5 w-5 text-gray-400 flex-shrink-0 ml-4" />
                     </div>
-                    <Link href={`/therapist/shifts/${shift.id}`}>
-                      <Button>View & Apply</Button>
-                    </Link>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                  </CardContent>
+                </Card>
+              </Link>
+            )
+          })}
         </div>
-      ) : (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <Calendar className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">No available shifts</h3>
-            <p className="text-gray-500 mt-1">
-              There are no open shifts in your area right now. Check back later!
-            </p>
-          </CardContent>
-        </Card>
       )}
     </div>
   )

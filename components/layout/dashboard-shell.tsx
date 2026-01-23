@@ -8,6 +8,7 @@ import { Navbar } from './navbar'
 interface DashboardShellProps {
   children: ReactNode
   userType: 'therapist' | 'organizer' | 'admin'
+  isAdmin?: boolean
   user: {
     id: string
     email: string
@@ -16,14 +17,14 @@ interface DashboardShellProps {
   }
 }
 
-export function DashboardShell({ children, userType, user }: DashboardShellProps) {
+export function DashboardShell({ children, userType, isAdmin, user }: DashboardShellProps) {
   return (
     <MobileNavProvider>
       <div className="min-h-screen bg-gray-50">
-        <Sidebar userType={userType} />
+        <Sidebar userType={userType} isAdmin={isAdmin} />
         <div className="lg:pl-64">
           <Navbar user={user} />
-          <main className="py-6 px-4 sm:px-6 lg:px-8">
+          <main id="main-content" className="py-6 px-4 sm:px-6 lg:px-8" tabIndex={-1}>
             {children}
           </main>
         </div>

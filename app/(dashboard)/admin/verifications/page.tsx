@@ -1,6 +1,15 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/lib/firebase/AuthContext'
+import {
+  getAllTherapistsWithProfiles,
+  verifyTherapistCredentials,
+  approveCredentialDocument,
+  rejectCredentialDocument,
+  TherapistWithProfile,
+} from '@/lib/firebase/firestore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,54 +23,34 @@ import {
   User,
   FileCheck,
   AlertCircle,
+  ShieldAlert,
 } from 'lucide-react'
 
-interface CredentialDocument {
-  id: string
-  therapist_id: string
-  document_type: string
-  file_url: string
-  uploaded_at: string
-  verified_at: string | null
-  verified_by: string | null
-}
-
-interface Therapist {
-  id: string
-  user_id: string
-  credentials_verified: boolean
-  profiles: {
-    full_name: string
-    email: string
-  }
-  credential_documents: CredentialDocument[]
-}
-
 export default function AdminVerificationsPage() {
+  const router = useRouter()
+  const { user, profile, loading: authLoading } = useAuth()
   const [loading, setLoading] = useState(true)
-  const [therapists, setTherapists] = useState<Therapist[]>([])
+  const [therapists, setTherapists] = useState<TherapistWithProfile[]>([])
   const [processing, setProcessing] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<'pending' | 'verified' | 'all'>('pending')
 
   useEffect(() => {
-    loadData()
-  }, [])
+    if (!authLoading) {
+      if (!profile?.isAdmin) {
+        router.push('/')
+        return
+      }
+      loadData()
+    }
+  }, [authLoading, profile])
 
   const loadData = async () => {
     setLoading(true)
     setError(null)
 
     try {
-      const response = await fetch('/api/admin/therapists')
-      const data = await response.json()
-
-      if (!response.ok) {
-        setError(data.error || 'Failed to load therapists')
-        setLoading(false)
-        return
-      }
-
+      const data = await getAllTherapistsWithProfiles()
       setTherapists(data)
     } catch (err) {
       console.error('Unexpected error:', err)
@@ -72,74 +61,46 @@ export default function AdminVerificationsPage() {
   }
 
   const handleApproveDocument = async (documentId: string, therapistId: string) => {
+    if (!user) return
     setProcessing(documentId)
     setError(null)
 
     try {
-      const response = await fetch('/api/admin/credentials', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ documentId, therapistId, action: 'approve' })
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        setError(data.error || 'Failed to approve document')
-      } else {
-        await loadData()
-      }
+      await approveCredentialDocument(documentId, user.uid, therapistId)
+      await loadData()
     } catch (err) {
+      console.error('Error approving document:', err)
       setError('Failed to approve document')
     }
 
     setProcessing(null)
   }
 
-  const handleRejectDocument = async (documentId: string, therapistId: string) => {
+  const handleRejectDocument = async (documentId: string) => {
     setProcessing(documentId)
     setError(null)
 
     try {
-      const response = await fetch('/api/admin/credentials', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ documentId, therapistId, action: 'reject' })
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        setError(data.error || 'Failed to reject document')
-      } else {
-        await loadData()
-      }
+      await rejectCredentialDocument(documentId)
+      await loadData()
     } catch (err) {
+      console.error('Error rejecting document:', err)
       setError('Failed to reject document')
     }
 
     setProcessing(null)
   }
 
-  const handleApproveAll = async (therapist: Therapist) => {
+  const handleApproveAll = async (therapist: TherapistWithProfile) => {
+    if (!user) return
     setProcessing(`all-${therapist.id}`)
     setError(null)
 
     try {
-      const response = await fetch('/api/admin/credentials', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ therapistId: therapist.id, action: 'approve_all' })
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        setError(data.error || 'Failed to approve documents')
-      } else {
-        await loadData()
-      }
+      await verifyTherapistCredentials(therapist.id, user.uid)
+      await loadData()
     } catch (err) {
+      console.error('Error approving all:', err)
       setError('Failed to approve documents')
     }
 
@@ -148,22 +109,36 @@ export default function AdminVerificationsPage() {
 
   const filteredTherapists = therapists.filter(t => {
     if (filter === 'pending') {
-      return !t.credentials_verified && t.credential_documents.length > 0
+      return !t.credentialsVerified && t.credentialDocuments.length > 0
     }
     if (filter === 'verified') {
-      return t.credentials_verified
+      return t.credentialsVerified
     }
-    return t.credential_documents.length > 0
+    return t.credentialDocuments.length > 0
   })
 
-  const getPendingCount = (therapist: Therapist) => {
-    return therapist.credential_documents.filter(d => !d.verified_at).length
+  const getPendingCount = (therapist: TherapistWithProfile) => {
+    return therapist.credentialDocuments.filter(d => !d.verifiedAt).length
   }
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-purple-600" />
+      </div>
+    )
+  }
+
+  if (!profile?.isAdmin) {
+    return (
+      <div className="max-w-6xl mx-auto">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+          <ShieldAlert className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-sm font-medium text-red-800">Access Denied</h3>
+            <p className="text-sm text-red-700 mt-1">You don't have permission to access this page.</p>
+          </div>
+        </div>
       </div>
     )
   }
@@ -221,7 +196,7 @@ export default function AdminVerificationsPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">
-                  {therapists.filter(t => !t.credentials_verified && t.credential_documents.length > 0).length}
+                  {therapists.filter(t => !t.credentialsVerified && t.credentialDocuments.length > 0).length}
                 </p>
                 <p className="text-sm text-gray-500">Pending Review</p>
               </div>
@@ -236,7 +211,7 @@ export default function AdminVerificationsPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">
-                  {therapists.filter(t => t.credentials_verified).length}
+                  {therapists.filter(t => t.credentialsVerified).length}
                 </p>
                 <p className="text-sm text-gray-500">Verified</p>
               </div>
@@ -278,20 +253,20 @@ export default function AdminVerificationsPage() {
                     </div>
                     <div>
                       <CardTitle className="text-lg">
-                        {therapist.profiles?.full_name || 'Unknown'}
+                        {therapist.profile?.fullName || 'Unknown'}
                       </CardTitle>
-                      <p className="text-sm text-gray-500">{therapist.profiles?.email}</p>
+                      <p className="text-sm text-gray-500">{therapist.profile?.email}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {therapist.credentials_verified ? (
+                    {therapist.credentialsVerified ? (
                       <Badge variant="success">Verified</Badge>
                     ) : (
                       <Badge variant="warning">
                         {getPendingCount(therapist)} pending
                       </Badge>
                     )}
-                    {!therapist.credentials_verified && getPendingCount(therapist) > 0 && (
+                    {!therapist.credentialsVerified && getPendingCount(therapist) > 0 && (
                       <Button
                         size="sm"
                         onClick={() => handleApproveAll(therapist)}
@@ -310,27 +285,27 @@ export default function AdminVerificationsPage() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {therapist.credential_documents.map((doc) => (
+                  {therapist.credentialDocuments.map((doc) => (
                     <div
                       key={doc.id}
                       className="border rounded-lg p-4 space-y-3"
                     >
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium">
-                          {DOCUMENT_TYPE_LABELS[doc.document_type as keyof typeof DOCUMENT_TYPE_LABELS] || doc.document_type}
+                          {DOCUMENT_TYPE_LABELS[doc.documentType as keyof typeof DOCUMENT_TYPE_LABELS] || doc.documentType}
                         </span>
-                        {doc.verified_at ? (
+                        {doc.verifiedAt ? (
                           <Badge variant="success" className="text-xs">Verified</Badge>
                         ) : (
                           <Badge variant="warning" className="text-xs">Pending</Badge>
                         )}
                       </div>
                       <p className="text-xs text-gray-500">
-                        Uploaded: {new Date(doc.uploaded_at).toLocaleDateString()}
+                        Uploaded: {doc.uploadedAt?.toDate ? new Date(doc.uploadedAt.toDate()).toLocaleDateString() : 'Unknown'}
                       </p>
                       <div className="flex items-center gap-2">
                         <a
-                          href={doc.file_url}
+                          href={doc.fileUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="flex-1"
@@ -340,7 +315,7 @@ export default function AdminVerificationsPage() {
                             View
                           </Button>
                         </a>
-                        {!doc.verified_at ? (
+                        {!doc.verifiedAt ? (
                           <Button
                             size="sm"
                             onClick={() => handleApproveDocument(doc.id, therapist.id)}
@@ -357,7 +332,7 @@ export default function AdminVerificationsPage() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => handleRejectDocument(doc.id, therapist.id)}
+                            onClick={() => handleRejectDocument(doc.id)}
                             disabled={processing === doc.id}
                             className="text-red-600 hover:text-red-700"
                           >
@@ -372,7 +347,7 @@ export default function AdminVerificationsPage() {
                     </div>
                   ))}
                 </div>
-                {therapist.credential_documents.length === 0 && (
+                {therapist.credentialDocuments.length === 0 && (
                   <p className="text-sm text-gray-500 text-center py-4">
                     No documents uploaded yet.
                   </p>

@@ -1,7 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useAuth } from '@/lib/firebase/AuthContext'
+import { getAdminStats, AdminStats } from '@/lib/firebase/firestore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Users,
@@ -11,19 +14,15 @@ import {
   Loader2,
   ArrowRight,
   AlertCircle,
+  ShieldAlert,
 } from 'lucide-react'
 
-interface Stats {
-  totalTherapists: number
-  verifiedTherapists: number
-  pendingVerifications: number
-  totalOrganizers: number
-}
-
 export default function AdminDashboardPage() {
+  const router = useRouter()
+  const { profile, loading: authLoading } = useAuth()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [stats, setStats] = useState<Stats>({
+  const [stats, setStats] = useState<AdminStats>({
     totalTherapists: 0,
     verifiedTherapists: 0,
     pendingVerifications: 0,
@@ -31,32 +30,44 @@ export default function AdminDashboardPage() {
   })
 
   useEffect(() => {
-    loadStats()
-  }, [])
+    if (!authLoading) {
+      if (!profile?.isAdmin) {
+        router.push('/')
+        return
+      }
+      loadStats()
+    }
+  }, [authLoading, profile])
 
   const loadStats = async () => {
     try {
-      const response = await fetch('/api/admin/stats')
-      const data = await response.json()
-
-      if (!response.ok) {
-        setError(data.error || 'Failed to load stats')
-        setLoading(false)
-        return
-      }
-
+      const data = await getAdminStats()
       setStats(data)
     } catch (err) {
-      setError('An unexpected error occurred')
+      console.error('Error loading stats:', err)
+      setError('Failed to load stats')
     }
-
     setLoading(false)
   }
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-purple-600" />
+      </div>
+    )
+  }
+
+  if (!profile?.isAdmin) {
+    return (
+      <div className="max-w-6xl mx-auto">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+          <ShieldAlert className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-sm font-medium text-red-800">Access Denied</h3>
+            <p className="text-sm text-red-700 mt-1">You don't have permission to access this page.</p>
+          </div>
+        </div>
       </div>
     )
   }

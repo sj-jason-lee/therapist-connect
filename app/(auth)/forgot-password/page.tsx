@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
+import { resetPassword } from '@/lib/firebase/auth'
 import { Mail, Loader2, AlertCircle, CheckCircle, ArrowLeft } from 'lucide-react'
 
 export default function ForgotPasswordPage() {
@@ -16,19 +16,14 @@ export default function ForgotPasswordPage() {
     setLoading(true)
     setError(null)
 
-    const supabase = createClient()
-
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    })
-
-    if (resetError) {
-      setError(resetError.message)
-      setLoading(false)
-      return
+    try {
+      await resetPassword(email)
+      setSuccess(true)
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to send reset email'
+      setError(errorMessage)
     }
 
-    setSuccess(true)
     setLoading(false)
   }
 
