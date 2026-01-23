@@ -1,10 +1,16 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useAuth } from '@/lib/firebase/AuthContext'
+import {
+  getShiftsByOrganizer,
+  getBookingsByShift,
+  getUserProfile,
+  Shift,
+} from '@/lib/firebase/firestore'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Select } from '@/components/ui/select'
 import {
   DollarSign,
   Clock,
@@ -22,32 +28,16 @@ import { formatDate, formatTime, formatCurrency } from '@/lib/utils'
 interface Payment {
   id: string
   status: string
-  check_in_time: string | null
-  check_out_time: string | null
-  hours_worked: number | null
-  amount_due: number | null
-  platform_fee: number | null
-  therapist_payout: number | null
-  paid_at: string | null
-  created_at: string
-  shift: {
-    id: string
-    title: string
-    date: string
-    start_time: string
-    end_time: string
-    hourly_rate: number
-    city: string
-    province: string
-  }
-  therapist: {
-    id: string
-    user_id: string
-    profile: {
-      full_name: string
-      email: string
-    } | null
-  } | null
+  checkInTime: Date | null
+  checkOutTime: Date | null
+  hoursWorked: number | null
+  amountDue: number | null
+  platformFee: number | null
+  therapistPayout: number | null
+  paidAt: Date | null
+  createdAt: Date
+  shift: Shift
+  therapistName: string
 }
 
 interface Stats {
@@ -60,6 +50,7 @@ interface Stats {
 }
 
 export default function OrganizerPaymentsPage() {
+  const { user, loading: authLoading } = useAuth()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [payments, setPayments] = useState<Payment[]>([])
@@ -74,29 +65,88 @@ export default function OrganizerPaymentsPage() {
   const [filter, setFilter] = useState('')
 
   useEffect(() => {
-    loadPayments()
-  }, [filter])
+    if (!authLoading && user) {
+      loadPayments()
+    }
+  }, [filter, user, authLoading])
 
   const loadPayments = async () => {
+    if (!user) return
+
     setLoading(true)
     setError(null)
 
     try {
-      const params = new URLSearchParams()
-      if (filter) params.set('status', filter)
+      // Get all shifts for this organizer
+      const shifts = await getShiftsByOrganizer(user.uid)
+      const shiftsMap = new Map(shifts.map(s => [s.id, s]))
 
-      const response = await fetch(`/api/organizer/payments?${params.toString()}`)
-      const data = await response.json()
+      // Get all bookings for all shifts
+      const allPayments: Payment[] = []
 
-      if (!response.ok) {
-        setError(data.error || 'Failed to load payments')
-        setLoading(false)
-        return
+      for (const shift of shifts) {
+        const bookings = await getBookingsByShift(shift.id)
+
+        for (const booking of bookings) {
+          // Get therapist name
+          let therapistName = 'Unknown Therapist'
+          try {
+            const therapistProfile = await getUserProfile(booking.therapistId)
+            if (therapistProfile) {
+              therapistName = therapistProfile.fullName
+            }
+          } catch (e) {
+            // Ignore errors fetching therapist profile
+          }
+
+          allPayments.push({
+            id: booking.id,
+            status: booking.status,
+            checkInTime: booking.checkInTime?.toDate() || null,
+            checkOutTime: booking.checkOutTime?.toDate() || null,
+            hoursWorked: booking.hoursWorked || null,
+            amountDue: booking.amountDue || null,
+            platformFee: booking.platformFee || null,
+            therapistPayout: booking.therapistPayout || null,
+            paidAt: booking.paidAt?.toDate() || null,
+            createdAt: booking.createdAt?.toDate() || new Date(),
+            shift,
+            therapistName,
+          })
+        }
       }
 
-      setPayments(data.payments)
-      setStats(data.stats)
+      // Apply filter
+      let filteredPayments = allPayments
+      if (filter === 'paid') {
+        filteredPayments = allPayments.filter(p => p.paidAt !== null)
+      } else if (filter === 'pending') {
+        filteredPayments = allPayments.filter(p =>
+          p.paidAt === null && (p.status === 'completed' || p.status === 'checked_out')
+        )
+      }
+
+      // Sort by date (newest first)
+      filteredPayments.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+
+      // Calculate stats
+      const paidPayments = allPayments.filter(p => p.paidAt !== null)
+      const pendingPayments = allPayments.filter(p =>
+        p.paidAt === null && (p.status === 'completed' || p.status === 'checked_out')
+      )
+
+      setStats({
+        totalBookings: allPayments.length,
+        totalSpent: allPayments.reduce((sum, p) => sum + (p.amountDue || 0), 0),
+        paidAmount: paidPayments.reduce((sum, p) => sum + (p.amountDue || 0), 0),
+        pendingAmount: pendingPayments.reduce((sum, p) => sum + (p.amountDue || 0), 0),
+        paidCount: paidPayments.length,
+        pendingCount: pendingPayments.length,
+      })
+
+      setPayments(filteredPayments)
     } catch (err) {
+      console.error('Error loading payments:', err)
       setError('An unexpected error occurred')
     }
 
@@ -104,7 +154,7 @@ export default function OrganizerPaymentsPage() {
   }
 
   const getStatusBadge = (payment: Payment) => {
-    if (payment.paid_at) {
+    if (payment.paidAt) {
       return (
         <Badge variant="success" className="text-xs">
           <CheckCircle className="h-3 w-3 mr-1" />
@@ -127,7 +177,7 @@ export default function OrganizerPaymentsPage() {
     )
   }
 
-  if (loading && payments.length === 0) {
+  if (authLoading || (loading && payments.length === 0)) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-secondary-600" />
@@ -284,24 +334,24 @@ export default function OrganizerPaymentsPage() {
                         <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-gray-600">
                           <span className="flex items-center gap-1">
                             <Calendar className="h-4 w-4" />
-                            {formatDate(payment.shift.date)}
+                            {payment.shift.date?.toDate ? formatDate(payment.shift.date.toDate().toISOString()) : 'TBD'}
                           </span>
                           <span className="flex items-center gap-1">
                             <Clock className="h-4 w-4" />
-                            {formatTime(payment.shift.start_time)} - {formatTime(payment.shift.end_time)}
+                            {formatTime(payment.shift.startTime)} - {formatTime(payment.shift.endTime)}
                           </span>
                         </div>
 
                         <div className="flex flex-wrap items-center gap-4 mt-2 text-sm text-gray-600">
                           <span className="flex items-center gap-1">
                             <User className="h-4 w-4 text-primary-600" />
-                            {payment.therapist?.profile?.full_name || 'Unknown Therapist'}
+                            {payment.therapistName}
                           </span>
                         </div>
 
-                        {payment.paid_at && (
+                        {payment.paidAt && (
                           <p className="text-xs text-gray-500 mt-2">
-                            Paid on {formatDate(payment.paid_at)}
+                            Paid on {formatDate(payment.paidAt.toISOString())}
                           </p>
                         )}
                       </div>
@@ -310,34 +360,34 @@ export default function OrganizerPaymentsPage() {
 
                   {/* Financial Info */}
                   <div className="lg:w-64 p-6 bg-gray-50 border-t lg:border-t-0 lg:border-l">
-                    {payment.amount_due ? (
+                    {payment.amountDue ? (
                       <div className="space-y-2">
                         <div className="flex justify-between text-sm">
                           <span className="text-gray-500">Hours Worked</span>
-                          <span className="font-medium">{payment.hours_worked || 0}h</span>
+                          <span className="font-medium">{payment.hoursWorked || 0}h</span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-gray-500">Rate</span>
-                          <span>{formatCurrency(payment.shift.hourly_rate)}/hr</span>
+                          <span>{formatCurrency(payment.shift.hourlyRate)}/hr</span>
                         </div>
                         <div className="flex justify-between text-sm pt-2 border-t">
                           <span className="text-gray-500">Therapist Pay</span>
-                          <span className="text-primary-600">{formatCurrency(payment.therapist_payout || 0)}</span>
+                          <span className="text-primary-600">{formatCurrency(payment.therapistPayout || 0)}</span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-gray-500">Service Fee (20%)</span>
-                          <span className="text-purple-600">+{formatCurrency(payment.platform_fee || 0)}</span>
+                          <span className="text-purple-600">+{formatCurrency(payment.platformFee || 0)}</span>
                         </div>
                         <div className="flex justify-between text-sm font-semibold pt-2 border-t">
                           <span className="text-gray-700">Your Total</span>
-                          <span className="text-gray-900">{formatCurrency(payment.amount_due)}</span>
+                          <span className="text-gray-900">{formatCurrency(payment.amountDue)}</span>
                         </div>
                       </div>
                     ) : (
                       <div className="text-center text-gray-500 text-sm">
                         <Clock className="h-8 w-8 mx-auto mb-2 text-gray-300" />
                         <p>Awaiting checkout</p>
-                        <p className="text-xs mt-1">Rate: {formatCurrency(payment.shift.hourly_rate)}/hr</p>
+                        <p className="text-xs mt-1">Rate: {formatCurrency(payment.shift.hourlyRate)}/hr</p>
                       </div>
                     )}
                   </div>
