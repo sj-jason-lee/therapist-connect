@@ -9,11 +9,13 @@ import {
   getTherapistProfile,
   createTherapistProfile,
   updateTherapistProfile,
+  updateUserProfile,
   markTherapistOnboardingComplete,
   markOnboardingComplete,
   createCredentialDocument,
   getCredentialDocuments,
 } from '@/lib/firebase/firestore'
+import { Timestamp } from 'firebase/firestore'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -239,16 +241,38 @@ export default function TherapistOnboardingPage() {
     setSaving(true)
 
     try {
-      const therapistData = {
+      // Update user profile with name and phone
+      await updateUserProfile(user.uid, {
+        fullName: formData.full_name,
+        ...(formData.phone && { phone: formData.phone }),
+      })
+
+      // Build therapist data with all fields
+      const therapistData: Record<string, any> = {
         city: formData.city,
         province: formData.province,
         postalCode: formData.postal_code,
         cataNumber: formData.cata_number,
         insuranceProvider: formData.insurance_provider,
-        insurancePolicyNumber: formData.insurance_policy_number,
         hourlyRateMin: formData.hourly_rate_min,
         hourlyRateMax: formData.hourly_rate_max,
         travelRadiusKm: formData.travel_radius_km,
+      }
+
+      // Add optional fields only if they have values
+      if (formData.insurance_policy_number) {
+        therapistData.insurancePolicyNumber = formData.insurance_policy_number
+      }
+
+      // Add date fields as Timestamps
+      if (formData.cata_expiry) {
+        therapistData.cataExpiry = Timestamp.fromDate(new Date(formData.cata_expiry))
+      }
+      if (formData.insurance_expiry) {
+        therapistData.insuranceExpiry = Timestamp.fromDate(new Date(formData.insurance_expiry))
+      }
+      if (formData.bls_expiry) {
+        therapistData.blsExpiry = Timestamp.fromDate(new Date(formData.bls_expiry))
       }
 
       if (hasExistingProfile) {
